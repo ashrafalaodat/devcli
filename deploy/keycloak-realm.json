@@ -1,0 +1,162 @@
+{
+  "realm": "devctl",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "developer"
+      },
+      {
+        "name": "administrator"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "developers",
+      "realmRoles": [
+        "developer"
+      ]
+    },
+    {
+      "name": "administrators",
+      "realmRoles": [
+        "administrator"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "devctl-api",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "devctl-cli",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:18000/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "basic"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ],
+      "protocolMappers": [
+        {
+          "name": "devctl-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "devctl-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "devctl-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.test",
+      "firstName": "Alice",
+      "lastName": "Developer",
+      "groups": [
+        "/developers"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-dev-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bob@example.test",
+      "firstName": "Bob",
+      "lastName": "Developer",
+      "groups": [
+        "/developers"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob-dev-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@example.test",
+      "firstName": "Devctl",
+      "lastName": "Administrator",
+      "groups": [
+        "/administrators"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin-dev-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "outsider",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "outsider@example.test",
+      "firstName": "Unapproved",
+      "lastName": "User",
+      "groups": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "outsider-dev-only",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

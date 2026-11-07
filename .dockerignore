@@ -1,0 +1,11 @@
+.demo
+bin
+.git
+.env
+.env.*
+*.key
+*.pem
+*.crt
+*-kubeconfig
+*.kubeconfig
+*.log

@@ -1,0 +1,2629 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "devctl reservation and Kubernetes gateway API",
+    "version": "0.2.0",
+    "description": "Whole-cluster exclusive bookings by default, holder-approved sharing, and an authenticated Kubernetes API gateway. Original static kubeconfigs stay encrypted on the server. Developer configs contain public gateway metadata and a devctl exec credential command. Reservation endpoints do not automatically provision or clean Kubernetes resources."
+  },
+  "servers": [
+    {
+      "url": "https://127.0.0.1:8080",
+      "description": "Local development gateway with generated CA; verified HTTPS required for exec credential authentication."
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Process liveness",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "PostgreSQL readiness",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "summary": "Current authenticated identity",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Identity"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/clusters": {
+      "get": {
+        "summary": "Registry and booking availability with visible co-users",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Cluster"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "summary": "Team sessions, including history",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Session"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Book a cluster; reject unavailable requests",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "Scoped to issuer/subject identity; same key and body replay the original reservation."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Booking"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "summary": "Session and current cluster participants",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "cluster": {
+                      "$ref": "#/components/schemas/Cluster"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/sessions/{id}/share": {
+      "post": {
+        "summary": "Controller enables or disables new shared bookings",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "shareable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "shareable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "shareable"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/stop": {
+      "post": {
+        "summary": "Owner releases a booking; idempotent",
+        "description": "Idempotently ends the owned reservation. Subsequent gateway requests fail. Existing streams close after authorization revalidation; Kubernetes operations already processed are not rolled back and workloads are not deleted.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/sessions/{id}/renew": {
+      "post": {
+        "summary": "Owner extends optional expiry",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ttl": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ttl"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/kubeconfig": {
+      "get": {
+        "summary": "Removed original-kubeconfig download endpoint",
+        "description": "Authenticated legacy endpoint. Original cluster credentials are no longer distributed. Use /v1/sessions/{id}/connection and the devctl CLI to generate a gateway-only config.",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          }
+        ],
+        "responses": {
+          "410": {
+            "description": "Gone: raw kubeconfig delivery is removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/logout": {
+      "post": {
+        "summary": "Release all active bookings owned by authenticated identity",
+        "description": "Releases all active bookings for this issuer/subject identity. The CLI separately clears local login/selection and attempts provider refresh-token revocation. Existing upstream credentials held outside devctl are not revoked.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/clusters": {
+      "post": {
+        "summary": "Import and encrypt an existing kubeconfig",
+        "description": "Administrator group required. Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Registration"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/clusters/{id}": {
+      "patch": {
+        "summary": "Set maintenance without evicting existing holders",
+        "description": "Administrator group required. Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "maintenance": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "maintenance",
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/sessions/{id}/release": {
+      "post": {
+        "summary": "Administratively release booking with audit reason",
+        "description": "Administrator group and an audit reason required. Ends the booking through the normal release path. Blocks gateway access; does not clean workloads or revoke original credentials outside devctl.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/connection": {
+      "get": {
+        "summary": "Active owner obtains public gateway connection metadata",
+        "description": "Requires an ACTIVE, unexpired booking owned by the authenticated SSO identity. Returns neither the original cluster kubeconfig nor any Kubernetes token or client private key. The CLI uses this metadata to generate a gateway-only kubeconfig.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public gateway connection metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/k8s/sessions/{id}/{path}": {
+      "get": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      },
+      "post": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      },
+      "head": {
+        "summary": "Forward an authenticated Kubernetes API request for an owned active session",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owned session ID."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Trusted issuer, API audience, valid signature and expiry, explicit access-token marker and approved group required. ID tokens rejected."
+      }
+    },
+    "schemas": {
+      "Identity": {
+        "type": "object",
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "admin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "issuer",
+          "subject",
+          "name",
+          "display_name",
+          "admin"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "RELEASED",
+              "EXPIRED"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "cluster",
+          "state",
+          "created_at"
+        ]
+      },
+      "Cluster": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "controller_session": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "maintenance": {
+            "type": "boolean"
+          },
+          "shareable": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "max_participants": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 10
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "shareable",
+          "max_participants",
+          "participants",
+          "available"
+        ]
+      },
+      "Booking": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "ttl": {
+            "type": "string",
+            "description": "Optional Go duration, 1m through 168h; omitted means no expiry"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Registration": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "kubeconfig": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Administrator-only import of one portable context with static embedded token or certificate/key and verified HTTPS. Encrypted immediately, used only by the backend transport, and never returned to developers."
+          },
+          "max_participants": {
+            "type": "integer",
+            "default": 2,
+            "minimum": 2,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kubeconfig"
+        ]
+      },
+      "Connection": {
+        "type": "object",
+        "properties": {
+          "server": {
+            "type": "string",
+            "format": "uri",
+            "description": "Configured developer-facing HTTPS gateway URL, suffixed with /k8s/sessions/{id}. HTTP gateway configs are rejected even on loopback because client-go skips exec authentication over HTTP."
+          },
+          "certificate_authority_data": {
+            "type": "string",
+            "description": "Optional base64-encoded public PEM CA data for gateway TLS, never upstream client credentials."
+          }
+        },
+        "required": [
+          "server"
+        ]
+      }
+    }
+  }
+}
