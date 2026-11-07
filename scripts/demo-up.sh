@@ -34,8 +34,9 @@ EXT
     -extfile .demo/tls/server.ext -out .demo/tls/server.crt >/dev/null 2>&1
 fi
 cat > .demo/transport-env <<ENV
-export DEVCTL_API='https://127.0.0.1:8080'
-export DEVCTL_PUBLIC_URL='https://127.0.0.1:8080'
+export DEVCTL_LISTEN='127.0.0.1:9090'
+export DEVCTL_API='https://127.0.0.1:9090'
+export DEVCTL_PUBLIC_URL='https://127.0.0.1:9090'
 export DEVCTL_TLS_CERT='$PWD/.demo/tls/server.crt'
 export DEVCTL_TLS_KEY='$PWD/.demo/tls/server.key'
 export DEVCTL_GATEWAY_CA_FILE='$PWD/.demo/tls/ca.crt'
@@ -63,7 +64,7 @@ if [[ -f .demo/backend.pid ]]; then
   rm .demo/backend.pid
 fi
 # Detect a listener rather than issuing an HTTP request to an unknown service.
-if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then echo 'Port 8080 is already in use; refusing to replace the service.' >&2; exit 1; fi
+if (exec 3<>/dev/tcp/127.0.0.1/9090) 2>/dev/null; then echo 'Port 9090 is already in use; refusing to replace the service.' >&2; exit 1; fi
 source .demo/env
 backend_launcher=()
 if command -v setsid >/dev/null 2>&1; then backend_launcher=(setsid); fi

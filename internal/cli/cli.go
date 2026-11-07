@@ -125,7 +125,7 @@ func NewCommand() *cobra.Command {
 	c := &Client{HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Out: os.Stdout, Err: os.Stderr}
 	var apiURL string
 	root := &cobra.Command{Use: "devctl", Short: "Book a cluster and access it through the devctl gateway", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().StringVar(&apiURL, "api", env("DEVCTL_API", "http://127.0.0.1:8080"), "Backend URL")
+	root.PersistentFlags().StringVar(&apiURL, "api", env("DEVCTL_API", "https://127.0.0.1:9090"), "Backend URL")
 	root.PersistentFlags().BoolVar(&c.JSON, "json", false, "Print machine-readable JSON (kubeconfig always prints only its path)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		u, e := url.Parse(apiURL)

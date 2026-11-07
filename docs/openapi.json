@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://127.0.0.1:8080",
+      "url": "https://127.0.0.1:9090",
       "description": "Local development gateway with generated CA; verified HTTPS required for exec credential authentication."
     }
   ],

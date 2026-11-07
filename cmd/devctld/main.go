@@ -66,7 +66,7 @@ func run() error {
 		return e
 	}
 	defer db.Pool.Close()
-	addr := env("DEVCTL_LISTEN", "127.0.0.1:8080")
+	addr := env("DEVCTL_LISTEN", "127.0.0.1:9090")
 	host, _, e := net.SplitHostPort(addr)
 	if e != nil {
 		return e

@@ -37,7 +37,9 @@ export PATH="$PWD/bin:$PATH"
 devctl login
 ```
 
-The demo binds PostgreSQL to `127.0.0.1:54329`, Keycloak to `127.0.0.1:8081`, and the host backend/gateway to `https://127.0.0.1:8080`. The issuer is exactly `http://127.0.0.1:8081/realms/devctl`; validation is not rewritten to use a container hostname. Only the Keycloak issuer uses explicitly enabled loopback HTTP. The demo generates a development CA and server certificate under `.demo/tls`, configures backend HTTPS, and exports `DEVCTL_API_CA_FILE` so the CLI trusts that CA without disabling certificate verification. Gateway URLs use HTTPS even on loopback: client-go does not use exec credential authentication for an HTTP kubeconfig server. The Keycloak realm is packaged in a small image, so the demo also works with Docker daemons that cannot mount the workspace.
+The demo binds PostgreSQL to `127.0.0.1:54329`, Keycloak to `127.0.0.1:8081`, and the host backend/gateway to `https://127.0.0.1:9090`. The issuer is exactly `http://127.0.0.1:8081/realms/devctl`; validation is not rewritten to use a container hostname. Only the Keycloak issuer uses explicitly enabled loopback HTTP. The demo generates a development CA and server certificate under `.demo/tls`, configures backend HTTPS, and exports `DEVCTL_API_CA_FILE` so the CLI trusts that CA without disabling certificate verification. Gateway URLs use HTTPS even on loopback: client-go does not use exec credential authentication for an HTTP kubeconfig server. The Keycloak realm is packaged in a small image, so the demo also works with Docker daemons that cannot mount the workspace.
+
+After updating an existing demo from port 8080, rerun `make demo-up` and `source .demo/env`. Log in again because local login profiles include the API URL. If shell integration was already installed, rerun `devctl shell install --shell bash` (or your shell) and reload it with `eval "$(devctl shell init --shell bash)"`. Existing database registrations and bookings remain intact; use `devctl select SESSION_ID` to reconnect an existing booking through the new port.
 
 Development-only accounts:
 
@@ -153,7 +155,7 @@ Backend:
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL URL; use verified TLS outside the local demo |
 | `DEVCTL_MASTER_KEY` | Base64 encoding of exactly 32 random bytes; keep outside the database |
-| `DEVCTL_LISTEN` | Default `127.0.0.1:8080` |
+| `DEVCTL_LISTEN` | Default `127.0.0.1:9090` |
 | `DEVCTL_PUBLIC_URL` | Developer-facing HTTPS gateway origin, used in generated configs. Required outside the local TLS-listener default; HTTP gateway URLs are rejected even on loopback |
 | `DEVCTL_GATEWAY_CA_FILE` | Optional PEM CA bundle for developer-facing gateway TLS; only its public certificate data is returned to clients |
 | `DEVCTL_GATEWAY_RECHECK_INTERVAL` | Authorization recheck interval for long requests; default `1s`, range `100ms` through `30s`. A stalled check fails closed after its `5s` timeout |
