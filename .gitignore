@@ -1,0 +1,14 @@
+/bin/
+/.demo/
+*.test
+coverage.out
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*-kubeconfig
+*.kubeconfig
+*.log
+.DS_Store
