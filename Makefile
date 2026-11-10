@@ -1,4 +1,4 @@
-.PHONY: build test test-db demo-up demo-test demo-down fmt
+.PHONY: build test test-db demo-up demo-test demo-down client-package fmt
 build:
 	mkdir -p bin
 	go build -buildvcs=false -trimpath -o bin/devctl ./cmd/devctl
@@ -14,5 +14,7 @@ demo-test: build
 	./scripts/demo-test.sh
 demo-down:
 	./scripts/demo-down.sh
+client-package: build
+	./scripts/package-client.sh
 fmt:
 	gofmt -w cmd internal tests

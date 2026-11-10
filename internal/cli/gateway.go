@@ -369,11 +369,20 @@ func (c *Client) installShell(ctx context.Context, shell, rcFile string) (string
 }
 
 func (c *Client) addGatewayCommands(root *cobra.Command) {
-	var session string
-	credential := &cobra.Command{Use: "credential", Short: "Kubernetes exec credential plugin for the devctl gateway", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error { return c.credential(cmd.Context(), session) }}
+	var session, automatic string
+	credential := &cobra.Command{Use: "credential", Short: "Kubernetes exec credential plugin for the devctl gateway", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if (session == "") == (automatic == "") {
+			return errors.New("specify exactly one of --session or --auto")
+		}
+		if automatic != "" {
+			return c.automaticCredential(cmd.Context(), automatic)
+		}
+		return c.credential(cmd.Context(), session)
+	}}
 	credential.Flags().StringVar(&session, "session", "", "Active session ID")
-	credential.MarkFlagRequired("session")
+	credential.Flags().StringVar(&automatic, "auto", "", "Automatic booking binding ID")
 	root.AddCommand(credential)
+	c.addAutomaticCommands(root)
 	root.AddCommand(&cobra.Command{Use: "select SESSION_ID", Short: "Select gateway access for every shell using this profile", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path, e := c.selectSession(cmd.Context(), args[0])
 		if e != nil {

@@ -69,15 +69,19 @@ func gatewayFailure(w http.ResponseWriter, e error) {
 }
 
 var gatewaySessionID = regexp.MustCompile(`^s-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+var gatewayAutomaticID = regexp.MustCompile(`^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 func gatewayPath(u *url.URL) (string, string, error) {
+	return parseGatewayPath(u, "/k8s/sessions/", gatewaySessionID)
+}
+
+func parseGatewayPath(u *url.URL, prefix string, validID *regexp.Regexp) (string, string, error) {
 	escaped := u.EscapedPath()
-	const prefix = "/k8s/sessions/"
 	if !strings.HasPrefix(escaped, prefix) {
 		return "", "", errors.New("invalid gateway path")
 	}
 	id, suffix, ok := strings.Cut(strings.TrimPrefix(escaped, prefix), "/")
-	if !ok || !gatewaySessionID.MatchString(id) {
+	if !ok || !validID.MatchString(id) {
 		return "", "", errors.New("invalid gateway session path")
 	}
 	suffix = "/" + suffix
@@ -102,6 +106,10 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	id, suffix, e := gatewayPath(r.URL)
+	binding := ""
+	if strings.HasPrefix(r.URL.Path, "/k8s/auto/") {
+		binding, suffix, e = parseGatewayPath(r.URL, "/k8s/auto/", gatewayAutomaticID)
+	}
 	if e != nil {
 		fail(w, 400, e.Error())
 		return
@@ -124,10 +132,28 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "invalid devctl access token or user not approved")
 		return
 	}
+	if binding != "" {
+		if u.TokenExpiresAt.IsZero() || !u.TokenExpiresAt.After(time.Now()) {
+			cancelSetup()
+			fail(w, http.StatusUnauthorized, "automatic gateway requires an unexpired access token")
+			return
+		}
+		id, e = s.Store.AutomaticSession(setup, u, binding)
+		if e != nil {
+			cancelSetup()
+			gatewayFailure(w, e)
+			return
+		}
+	}
 	cluster, ciphertext, e := s.Store.Config(setup, u, id)
 	if e != nil {
 		cancelSetup()
 		gatewayFailure(w, e)
+		return
+	}
+	if e = s.Store.TouchActivity(setup, u, id); e != nil {
+		cancelSetup()
+		fail(w, http.StatusServiceUnavailable, "activity state unavailable")
 		return
 	}
 	raw, e := s.Vault.Open(cluster, ciphertext)
@@ -166,7 +192,11 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	cancelSetup()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	go s.monitor(ctx, cancel, u, rawToken, id)
+	if binding == "" {
+		go s.monitor(ctx, cancel, u, rawToken, id)
+	} else {
+		go s.monitorAutomatic(ctx, cancel, u, binding, id)
+	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			decoded, _ := url.PathUnescape(suffix)
@@ -246,8 +276,40 @@ func (s *Server) monitor(ctx context.Context, cancel context.CancelFunc, u model
 			if e == nil {
 				e = s.Store.Access(check, u, id)
 			}
+			if e == nil {
+				e = s.Store.TouchActivity(check, u, id)
+			}
 			done()
 			if e != nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// Automatic streams use a server-side authorization lease. A separate request
+// with a fresh, fully validated JWT may renew that exact binding while active;
+// an expired bearer on a new request is still always rejected above.
+func (s *Server) monitorAutomatic(ctx context.Context, cancel context.CancelFunc, u model.Identity, binding, id string) {
+	interval := s.GatewayRecheckInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			check, done := context.WithTimeout(ctx, 5*time.Second)
+			err := s.Store.CheckAutomaticAccess(check, u, binding, id)
+			if err == nil {
+				err = s.Store.TouchActivity(check, u, id)
+			}
+			done()
+			if err != nil {
 				cancel()
 				return
 			}

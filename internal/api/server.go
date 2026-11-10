@@ -96,6 +96,9 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("GET /v1/sessions/{id}", s.get)
 	m.HandleFunc("POST /v1/sessions", s.book)
+	m.HandleFunc("POST /v1/auto/{binding}/ensure", s.ensureAutomatic)
+	m.HandleFunc("GET /v1/auto/{binding}", s.automatic)
+	m.HandleFunc("POST /v1/auto/{binding}/heartbeat", s.heartbeatAutomatic)
 	m.HandleFunc("POST /v1/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
 		e := s.Store.Stop(r.Context(), user(r), r.PathValue("id"), "holder ended booking; gateway requests denied; workloads retained", false)
 		if errors.Is(e, store.ErrForbidden) {
@@ -118,7 +121,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PATCH /v1/admin/clusters/{id}", s.maintain)
 	m.HandleFunc("POST /v1/admin/sessions/{id}/release", s.force)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/k8s/sessions/") {
+		if strings.HasPrefix(r.URL.Path, "/k8s/sessions/") || strings.HasPrefix(r.URL.Path, "/k8s/auto/") {
 			s.gateway(w, r)
 			return
 		}

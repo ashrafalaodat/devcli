@@ -82,5 +82,5 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (model.Identity, erro
 	if display == "" {
 		display = name
 	}
-	return model.Identity{Issuer: t.Issuer, Subject: t.Subject, Name: name, DisplayName: display, Email: email, Admin: admin}, nil
+	return model.Identity{Issuer: t.Issuer, Subject: t.Subject, Name: name, DisplayName: display, Email: email, Admin: admin, TokenExpiresAt: t.Expiry}, nil
 }

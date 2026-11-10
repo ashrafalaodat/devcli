@@ -2390,6 +2390,1218 @@
         },
         "x-devctl-catch-all": true
       }
+    },
+    "/v1/auto/{binding}/ensure": {
+      "post": {
+        "summary": "Ensure a stable automatic booking",
+        "description": "Reuse a compatible owned active session or reserve one transactionally. Binding parameters and session identity are immutable. An ended binding cannot allocate again; explicit client reactivation creates a new binding. Authorization expiry comes only from the verified OIDC access token, capped by booking expiry.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Different owner or invalid identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Binding not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Ended binding, changed booking parameters, no compatible capacity, or insufficient recent activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable reservation state unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Owned automatic access and current authorization lease",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomaticAccess"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Booking"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auto/{binding}": {
+      "get": {
+        "summary": "Inspect automatic binding activity",
+        "description": "Return the owned existing binding and last Kubernetes activity without reserving capacity, renewing authorization, or counting this control request as activity.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Different owner or invalid identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Binding not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Ended binding, changed booking parameters, no compatible capacity, or insufficient recent activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable reservation state unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Owned automatic access and current authorization lease",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomaticAccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auto/{binding}/heartbeat": {
+      "post": {
+        "summary": "Renew authorization for an active automatic binding",
+        "description": "Require a valid OIDC access token and Kubernetes activity within two minutes. Renew only this owner and exact active session. Expiry is capped by the token real expiry and booking expiry; a client cannot supply an expiry. This call does not count as activity or renew the cluster booking.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Different owner or invalid identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Binding not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Ended binding, changed booking parameters, no compatible capacity, or insufficient recent activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable reservation state unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Owned automatic access and current authorization lease",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomaticAccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/k8s/auto/{binding}/{path}": {
+      "get": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      },
+      "post": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true,
+        "requestBody": {
+          "required": false,
+          "description": "Kubernetes API payload, forwarded with its content type. Bodies can contain sensitive Secrets and must not be logged.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            },
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/apply-patch+yaml": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      },
+      "head": {
+        "summary": "Forward Kubernetes requests for an owned automatic binding",
+        "description": "Resolve an existing immutable automatic binding scoped to the authenticated issuer and subject, then forward to its recorded session using the gateway transport. Every new request requires a valid backend-audience OIDC access token. Original Kubernetes credentials remain on the backend. Requests never allocate or silently select another cluster. Accepted requests and authorized open streams record activity, throttled to once per 30 seconds. Automatic streams recheck the exact reservation and the server authorization lease; a fresh authenticated heartbeat may renew the lease beyond the original stream token expiry, bounded by the new verified token and booking expiry. Ended bookings, expired authorization and database failures close streams. TLS, header filtering, traversal rejection and bidirectional upgrade handling match the session-ID gateway.",
+        "parameters": [
+          {
+            "name": "binding",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            },
+            "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Catch-all Kubernetes API suffix, including slashes, for example api/v1/namespaces/default/pods. This server route preserves the suffix and query string."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upstream Kubernetes response; content type and status are preserved. Watch/log responses may stream.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "Bidirectional upgraded Kubernetes stream (for example WebSocket/SPDY), passed through by the gateway."
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Reservation conflict or invalid state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Registered upstream is unavailable or its TLS/transport fails; upstream secrets are not included in the diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
+          }
+        },
+        "x-devctl-catch-all": true
+      }
     }
   },
   "components": {
@@ -2475,6 +3687,11 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last accepted Kubernetes API request or authorized open stream observation; control-plane heartbeat calls do not count as activity."
           }
         },
         "required": [
@@ -2623,6 +3840,32 @@
         "required": [
           "server"
         ]
+      },
+      "AutomaticAccess": {
+        "type": "object",
+        "required": [
+          "session",
+          "authorization_expires_at"
+        ],
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "authorization_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Server-recorded authorization lease capped by verified access-token and booking expiry."
+          },
+          "server": {
+            "type": "string",
+            "format": "uri",
+            "description": "Stable configured HTTPS gateway URL for this automatic binding, returned by ensure."
+          },
+          "certificate_authority_data": {
+            "type": "string",
+            "description": "Optional base64 public PEM gateway CA; never upstream credentials."
+          }
+        }
       }
     }
   }

@@ -66,7 +66,7 @@ func (s *Store) Audit(ctx context.Context, actor, action, id, detail string) err
 	return s.update(ctx, func(t *Tx) error { return t.audit(ctx, actor, action, id, detail) })
 }
 func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
-	rows, e := t.Query(ctx, "SELECT id,owner_id,identity,cluster_id,state,created_at,ended_at,expires_at,reason FROM sessions ORDER BY created_at,id")
+	rows, e := t.Query(ctx, "SELECT id,owner_id,identity,cluster_id,state,created_at,ended_at,expires_at,last_activity_at,reason FROM sessions ORDER BY created_at,id")
 	if e != nil {
 		return nil, e
 	}
@@ -75,7 +75,7 @@ func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
 	for rows.Next() {
 		var v model.Session
 		var raw []byte
-		if e = rows.Scan(&v.ID, &v.Owner, &raw, &v.Cluster, &v.State, &v.CreatedAt, &v.EndedAt, &v.ExpiresAt, &v.Reason); e != nil {
+		if e = rows.Scan(&v.ID, &v.Owner, &raw, &v.Cluster, &v.State, &v.CreatedAt, &v.EndedAt, &v.ExpiresAt, &v.LastActivityAt, &v.Reason); e != nil {
 			return nil, e
 		}
 		var u model.Identity
@@ -202,11 +202,26 @@ func (s *Store) Snapshot(ctx context.Context) ([]model.Cluster, []model.Session,
 }
 func (s *Store) Book(ctx context.Context, u model.Identity, b model.Booking, key string) (model.Session, bool, error) {
 	var out model.Session
-	created := false
+	var created bool
+	err := s.update(ctx, func(t *Tx) error {
+		var err error
+		out, created, err = t.book(ctx, u, b, key)
+		return err
+	})
+	return out, created, err
+}
+
+func bookingHash(b model.Booking) string {
 	raw, _ := json.Marshal(b)
 	h := sha256.Sum256(raw)
-	hash := hex.EncodeToString(h[:])
-	e := s.update(ctx, func(t *Tx) error {
+	return hex.EncodeToString(h[:])
+}
+
+func (t *Tx) book(ctx context.Context, u model.Identity, b model.Booking, key string) (model.Session, bool, error) {
+	var out model.Session
+	created := false
+	hash := bookingHash(b)
+	err := func() error {
 		if e := t.expire(ctx); e != nil {
 			return e
 		}
@@ -275,8 +290,8 @@ func (s *Store) Book(ctx context.Context, u model.Identity, b model.Booking, key
 		}
 		created = true
 		return t.audit(ctx, u.Key(), "book", out.ID, out.Reason)
-	})
-	return out, created, e
+	}()
+	return out, created, err
 }
 func (s *Store) Share(ctx context.Context, u model.Identity, id string, on bool) error {
 	return s.update(ctx, func(t *Tx) error {

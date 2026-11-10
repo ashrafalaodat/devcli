@@ -69,6 +69,22 @@ func TestAccessTokenValidation(t *testing.T) {
 			if tt.ok && (u.Subject != "123" || u.DisplayName != "Alice Developer") {
 				t.Fatal(u)
 			}
+			if tt.ok {
+				if u.TokenExpiresAt.Unix() != m["exp"].(int64) {
+					t.Fatal("trusted identity did not retain the verified token expiry")
+				}
+				encoded, err := json.Marshal(u)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(encoded, &fields); err != nil {
+					t.Fatal(err)
+				}
+				if fields["TokenExpiresAt"] != nil || fields["token_expires_at"] != nil {
+					t.Fatal("trusted expiry leaked into stored/public identity JSON")
+				}
+			}
 			if tt.name == "valid developer" {
 				bad := token[:len(token)-8] + "AAAAAAAA"
 				if _, e = v.Verify(context.Background(), bad); e == nil {

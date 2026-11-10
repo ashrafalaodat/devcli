@@ -1,5 +1,24 @@
 # Gateway verification record
 
+## 2026-11-10: automatic kubectl workflow
+
+The previous working version was committed and pushed as `a6a016e` before this implementation started. The new automatic workflow adds offline setup, an interactive credential helper, immutable automatic bindings, activity observation, and a detached authenticated renewal worker. Existing explicit-session behavior remains available.
+
+Implemented and tested:
+
+- Actual kubectl in a pseudo-terminal triggered real Keycloak Authorization Code + S256 PKCE login on its first ordinary `get pods`, with no separate login/start command. Six concurrent commands reused the same booking. Setup and noninteractive missing-login tests made no authentication/allocation requests.
+- Real PostgreSQL concurrency tests covered creation and reuse of compatible own bookings, restart persistence, immutable parameters, owner/issuer isolation, ended bindings, activity throttling, idle renewal rejection, and authorization expiry capped by verified-token and reservation expiry.
+- A detached worker survived the originating kubectl process, refreshed credentials through real Keycloak, rotated both access and refresh tokens, and advanced the server authorization lease without another CLI command. Its own control requests left `last_activity_at` unchanged. The full automatic E2E took 16.22 seconds with race detection.
+- Gateway stream tests with PostgreSQL and a test authenticator continued automatic streams past their original credential expiry after a fresh authenticated heartbeat, rejected expired credentials on new requests, and closed streams on stop, authorization-lease expiry, or database failure. Explicit session-ID streams retained original-token expiry behavior. These controlled expiry tests use a test authenticator; they are not a ten-minute real-IdP soak test.
+- The existing E2E passed in 7.37 seconds against the same disposable Keycloak realm, covering manual bookings, sharing, gateway ownership, actual kubectl apply/logs/exec/watch/port-forward transports, refresh, logout, and backend restart.
+- A native Linux client archive contained only the executable and installer. Installation into temporary paths tested spaces/apostrophes, repeat installation, preserved RC content, private gateway-only metadata, and a single shell integration block. No real shell startup file or global kubeconfig was edited.
+
+Commands and checks executed: `make build`, `make test`, `make test-db`, focused `go test -race ./internal/cli -count=1`, both integration tests with `DEVCTL_TEST_ISSUER=http://127.0.0.1:8082/realms/devctl` and a local PostgreSQL test URL, `go vet ./...`, shell syntax, OpenAPI path/parameter validation, embedded migration SQL comparison, client packaging, and isolated installer checks. Build/test commands used `GOTMPDIR=/local/workspace/devctl-tmp`.
+
+The new identity-provider defaults were tested using a disposable local Keycloak container with ten-minute access tokens, one day of SSO inactivity, seven days maximum SSO duration, and refresh-token rotation. Existing persistent demo realms retain their previous provider policy until an administrator changes it. The seven-day maximum is configuration, not a completed seven-day endurance test. All Kubernetes traffic in these new tests used disposable TLS API fixtures; registered remote clusters were not contacted or modified.
+
+Implemented but not deployment-tested: automatic browser/keyring behavior on actual desktop installations, Windows/Mac process detachment, production reverse proxies and load, corporate OIDC, and automatic access against real Kubernetes workloads. Automatic mode requires the REST API and gateway to share a public HTTPS origin. The 15-second renewal interval assumes access tokens last comfortably longer than that interval; shorter lifetimes fail closed. No human-presence inference, idle workload cleanup, or automatic booking extension was added.
+
 ## 2026-11-09: demo identity persistence
 
 A recreated Keycloak container imported Alice with a new OIDC subject while PostgreSQL retained a booking owned by her earlier subject. The ownership rejection was correct. The orphaned booking was released through the authenticated administrator endpoint with an audit reason; no Kubernetes resources were changed.

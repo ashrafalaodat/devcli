@@ -24,6 +24,45 @@ The gateway uses the permissions already present in the administrator-imported k
 
 Stop, expiry, logout, and administrator release prevent new requests through that booking's gateway route. Long-running requests are also subject to backend authorization rechecks; work already accepted by Kubernetes is not rolled back. No workloads or data are deleted. Existing unmanaged kubeconfigs and original credentials distributed by earlier devctl versions can still bypass the gateway and must be handled separately.
 
+## Use normal kubectl commands
+
+The automatic workflow needs one setup step. After that, developers use ordinary kubectl commands; the configured credential helper handles login, allocation, and refresh. The backend REST API and Kubernetes gateway must use the same public HTTPS origin for this mode. Explicit session kubeconfigs still support the separately configured gateway origin.
+
+With the local demo running, prepare the automatic config in the current terminal:
+
+```bash
+source .demo/env
+export KUBECONFIG="$(./bin/devctl setup)"
+# Optional specific cluster: ./bin/devctl setup --cluster cluster-4196 --new-booking
+kubectl get namespaces
+```
+
+Setup prints only the config path. It does not log in or book a cluster. On the first interactive kubectl request, the helper opens browser SSO, or prints a URL when `DEVCTL_NO_BROWSER=1`. It then reuses a compatible booking owned by that identity or creates an exclusive booking. Concurrent commands and later terminals using this profile stay on that exact booking. Noninteractive commands can reuse an existing login but never launch a browser. Only public gateway metadata is stored in the kubeconfig; original Kubernetes credentials remain encrypted on the backend.
+
+For the remote demo, keep SSH forwards for local ports 8081 and 18000 open and use `export DEVCTL_NO_BROWSER=1` before running kubectl. Open the printed URL unchanged in the laptop browser. The callback port supports one browser login at a time. Once logged in, concurrent kubectl processes share the profile's token refresh lock.
+
+Actual gateway traffic and authorized open streams record activity. A detached helper refreshes credentials and renews server authorization while that activity continues. It polls every 15 seconds and exits after two minutes without Kubernetes activity, on authentication failure, or when the booking ends. Its own status/heartbeat calls do not count as activity. Missing heartbeats never release the cluster or delete workloads. Automatic streams can continue across an access-token refresh through this authenticated renewal channel; older explicit session routes continue to close at their original token expiry.
+
+Stopping a session, optional expiry, logout, and administrator release all block that binding. A subsequent kubectl command cannot silently acquire another cluster. Explicitly reactivate with:
+
+```bash
+export KUBECONFIG="$(./bin/devctl setup --new-booking)"
+kubectl get namespaces
+```
+
+Changing the configured cluster, selectors, or TTL also requires `--new-booking`. An existing compatible owned booking keeps its existing lease; use `renew` explicitly to extend it. A profile is pinned to its first authenticated identity, so separate accounts need separate `DEVCTL_CONFIG_DIR` values. Session management and administrator commands remain available below.
+
+To distribute the client, a service operator runs `make client-package`. This creates `dist/devctl-client-<os>-<arch>.tar.gz` containing the helper binary and installer. On the client machine, extract that archive and run:
+
+```bash
+./install.sh --api https://devctl.example.test --issuer https://identity.example.test/realms/engineering \
+  --shell bash
+# For a private service CA, also pass --ca-file /path/to/public-gateway-ca.pem.
+# Omit --shell to leave startup files alone and receive the current-terminal command.
+```
+
+The installer puts the helper in `~/.local/bin` (override with `DEVCTL_INSTALL_DIR`). Optional `--shell bash|zsh|fish` installs the existing bounded shell block; `--rc-file FILE` can target another startup file. Open a new shell after installation, then run kubectl. This archive uses the native build platform; Linux is the tested platform. It contains no login tokens, server master key, or upstream kubeconfigs. See [the automatic-access decision](docs/adr-003.md) for authentication lifetime and renewal details.
+
 ## Local setup
 
 Prerequisites: Go 1.26, Docker Engine with Compose, `curl`, `openssl`; Linux is the tested host. `kubectl` is needed for the end-to-end client tests. These setup commands create only local demo services, not Kubernetes resources.
@@ -102,7 +141,7 @@ New shells load the same active kubeconfig path automatically. `start` and `sele
 
 `devctl kubeconfig SESSION_ID` is still available for tools that require a path: it writes a separate **gateway-only** 0600 kubeconfig and prints only its absolute path, including with `--json`. It does not download the original kubeconfig. `devctl exec SESSION_ID -- kubectl get namespaces` runs a child with the chosen gateway-only config without changing the profile-wide selection.
 
-The generated config invokes `devctl credential --session SESSION_ID`. That plugin refreshes existing devctl login when possible, checks the active owned booking, and returns only a `client.authentication.k8s.io/v1` ExecCredential document with the backend-intended OIDC access token and its expiry. It never opens a browser from inside kubectl. If login cannot be refreshed, run `devctl login` explicitly. The token authenticates to devctl, not directly to Kubernetes.
+An explicit session config invokes `devctl credential --session SESSION_ID`. That plugin refreshes existing devctl login when possible, checks the active owned booking, and returns only a `client.authentication.k8s.io/v1` ExecCredential document with the backend-intended OIDC access token and its expiry. This manual mode never opens a browser from inside kubectl. If login cannot be refreshed, run `devctl login` explicitly. The automatic setup above opts into interactive first-use login through `devctl credential --auto BINDING_ID`. Both tokens authenticate to devctl, not directly to Kubernetes.
 
 ```bash
 devctl stop SESSION_ID

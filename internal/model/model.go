@@ -13,6 +13,8 @@ type Identity struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email,omitempty"`
 	Admin       bool   `json:"admin"`
+	// TokenExpiresAt comes only from a verified access token, never API JSON.
+	TokenExpiresAt time.Time `json:"-"`
 }
 
 func (i Identity) Key() string {
@@ -33,17 +35,18 @@ type Cluster struct {
 	Reason            string            `json:"reason"`
 }
 type Session struct {
-	ID          string     `json:"id"`
-	Owner       string     `json:"owner"`
-	Name        string     `json:"name"`
-	DisplayName string     `json:"display_name"`
-	Email       string     `json:"email,omitempty"`
-	Cluster     string     `json:"cluster"`
-	State       string     `json:"state"`
-	CreatedAt   time.Time  `json:"created_at"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	Reason      string     `json:"reason"`
+	ID             string     `json:"id"`
+	Owner          string     `json:"owner"`
+	Name           string     `json:"name"`
+	DisplayName    string     `json:"display_name"`
+	Email          string     `json:"email,omitempty"`
+	Cluster        string     `json:"cluster"`
+	State          string     `json:"state"`
+	CreatedAt      time.Time  `json:"created_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
+	Reason         string     `json:"reason"`
 }
 type Booking struct {
 	Cluster  string            `json:"cluster,omitempty"`

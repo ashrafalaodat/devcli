@@ -39,3 +39,15 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE TABLE IF NOT EXISTS schema_version(version integer PRIMARY KEY);
 INSERT INTO schema_version VALUES(1) ON CONFLICT DO NOTHING;
+
+-- Automatic client bindings remain pinned to one session across command retries.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_activity_at timestamptz;
+CREATE TABLE IF NOT EXISTS automatic_bindings (
+ owner_id text NOT NULL,
+ binding_id text NOT NULL,
+ session_id text NOT NULL REFERENCES sessions(id),
+ request_hash text NOT NULL,
+ authorization_expires_at timestamptz NOT NULL,
+ PRIMARY KEY(owner_id,binding_id)
+);
+INSERT INTO schema_version VALUES(2) ON CONFLICT DO NOTHING;

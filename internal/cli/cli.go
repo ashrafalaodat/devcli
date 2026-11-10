@@ -29,6 +29,13 @@ type ExitError struct {
 	Err  error
 }
 
+type apiStatusError struct {
+	Status  int
+	Message string
+}
+
+func (e *apiStatusError) Error() string { return e.Message }
+
 func (e *ExitError) Error() string { return e.Err.Error() }
 func (e *ExitError) Unwrap() error { return e.Err }
 
@@ -92,7 +99,7 @@ func (c *Client) withToken(ctx context.Context, token, method, path string, body
 		case 404:
 			code = 5
 		}
-		return &ExitError{code, errors.New(msg.Error)}
+		return &ExitError{code, &apiStatusError{Status: resp.StatusCode, Message: msg.Error}}
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)

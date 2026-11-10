@@ -178,7 +178,11 @@ func (s *loginStore) token(ctx context.Context) (*oauth2.Token, error) {
 	if e != nil {
 		return nil, e
 	}
-	t, e := cfg.TokenSource(ctx, old).Token()
+	// TokenSource otherwise reuses an access token that is still valid for its
+	// shorter default grace period. Force the refresh selected by our 30s window.
+	refresh := *old
+	refresh.Expiry = time.Unix(1, 0)
+	t, e := cfg.TokenSource(ctx, &refresh).Token()
 	if e != nil {
 		return nil, errors.New("login refresh failed; run devctl login")
 	}
