@@ -27,5 +27,8 @@ services:
       KC_HOSTNAME: http://127.0.0.1:8081
     ports:
       - '127.0.0.1:8081:8080'
+    volumes:
+      - keycloak-data:/opt/keycloak/data/h2
 volumes:
   postgres-data:
+  keycloak-data:

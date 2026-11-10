@@ -5,19 +5,7 @@ source scripts/lib-demo.sh
 umask 077
 mkdir -p .demo/tls
 chmod 700 .demo .demo/tls
-if [[ ! -f .demo/env ]]; then
-  master_key="$(openssl rand -base64 32)"
-  cat > .demo/env <<ENV
-export DATABASE_URL='postgres://devctl:devctl-dev-only@127.0.0.1:54329/devctl?sslmode=disable'
-export DEVCTL_MASTER_KEY='$master_key'
-export DEVCTL_ISSUER='http://127.0.0.1:8081/realms/devctl'
-export DEVCTL_DEV_HTTP=1
-export DEVCTL_DEV_TOKEN_FILE=1
-export DEVCTL_CONFIG_DIR='$PWD/.demo/client'
-ENV
-fi
-# Keep the encryption key and database during upgrades. Rebuild this generated
-# transport-settings file so earlier HTTP demos become HTTPS without key loss.
+devctl_demo_prepare_env
 if [[ ! -f .demo/tls/server.crt ]] || ! openssl x509 -checkend 86400 -noout -in .demo/tls/server.crt >/dev/null; then
   openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 30 \
     -subj /CN=devctl-local-demo-CA -keyout .demo/tls/ca.key -out .demo/tls/ca.crt >/dev/null 2>&1
@@ -33,18 +21,7 @@ EXT
     -CA .demo/tls/ca.crt -CAkey .demo/tls/ca.key -CAcreateserial \
     -extfile .demo/tls/server.ext -out .demo/tls/server.crt >/dev/null 2>&1
 fi
-cat > .demo/transport-env <<ENV
-export DEVCTL_LISTEN='127.0.0.1:9090'
-export DEVCTL_API='https://127.0.0.1:9090'
-export DEVCTL_PUBLIC_URL='https://127.0.0.1:9090'
-export DEVCTL_TLS_CERT='$PWD/.demo/tls/server.crt'
-export DEVCTL_TLS_KEY='$PWD/.demo/tls/server.key'
-export DEVCTL_GATEWAY_CA_FILE='$PWD/.demo/tls/ca.crt'
-export DEVCTL_API_CA_FILE='$PWD/.demo/tls/ca.crt'
-ENV
-if ! grep -q '^source .*transport-env' .demo/env; then
-  printf '\nsource '\''%s/.demo/transport-env'\''\n' "$PWD" >>.demo/env
-fi
+./scripts/migrate-keycloak.sh
 docker --host=unix:///var/run/docker.sock compose -f compose.yaml up -d --build --wait postgres keycloak
 ready=0
 for attempt in {1..120}; do

@@ -39,6 +39,10 @@ devctl login
 
 The demo binds PostgreSQL to `127.0.0.1:54329`, Keycloak to `127.0.0.1:8081`, and the host backend/gateway to `https://127.0.0.1:9090`. The issuer is exactly `http://127.0.0.1:8081/realms/devctl`; validation is not rewritten to use a container hostname. Only the Keycloak issuer uses explicitly enabled loopback HTTP. The demo generates a development CA and server certificate under `.demo/tls`, configures backend HTTPS, and exports `DEVCTL_API_CA_FILE` so the CLI trusts that CA without disabling certificate verification. Gateway URLs use HTTPS even on loopback: client-go does not use exec credential authentication for an HTTP kubeconfig server. The Keycloak realm is packaged in a small image, so the demo also works with Docker daemons that cannot mount the workspace.
 
+PostgreSQL reservations and Keycloak's development database use separate named volumes. Recreating the containers preserves user identity IDs and booking ownership. On the first upgrade from a demo without Keycloak storage, `make demo-up` stops Keycloak briefly, keeps a private backup under `.demo/keycloak-migration.*`, and copies its database into the new volume before recreating it. It refuses to overwrite unknown volume data. Already orphaned bookings belong to their original OIDC identities: an administrator must release them with `devctl admin release SESSION_ID --reason 'Identity provider was reset'`; matching usernames or email addresses do not transfer ownership.
+
+After moving the repository, run `make demo-up` from its new directory and source `.demo/env` again. Startup updates the generated paths while preserving the saved database settings and encryption key. Keep `.demo` when moving an existing demo with registered clusters: its encryption key is required to read the saved credentials. Run `devctl login` and `devctl select SESSION_ID` again if the profile path changed, and rerun `devctl shell install` if previously installed so new shells use the new paths.
+
 After updating an existing demo from port 8080, rerun `make demo-up` and `source .demo/env`. Log in again because local login profiles include the API URL. If shell integration was already installed, rerun `devctl shell install --shell bash` (or your shell) and reload it with `eval "$(devctl shell init --shell bash)"`. Existing database registrations and bookings remain intact; use `devctl select SESSION_ID` to reconnect an existing booking through the new port.
 
 Development-only accounts:
@@ -140,12 +144,12 @@ Maintenance prevents new bookings without evicting current holders. Administrati
 make test             # unit tests; database/Keycloak suites skip without configuration
 make test-db          # real PostgreSQL concurrency and API/gateway authorization tests
 make demo-test        # real PostgreSQL + Keycloak + CLI/backend; disposable TLS API fixture
-make demo-down        # only this project's containers, volume and .demo directory
+make demo-down        # only this project's containers, volumes and .demo directory
 ```
 
 `demo-test` requires `demo-up` first. Tests create uniquely named PostgreSQL schemas and delete only those schemas. End-to-end tests use the real Keycloak Authorization Code + PKCE flow and a disposable TLS test server representing the Kubernetes API. Gateway forwarding and kubectl integration tests do not modify a real Kubernetes cluster. Mock API transport tests do not prove real-cluster CNI, admission, scheduling, workload behavior, or all Kubernetes streaming implementations; the exact checks actually run are in [the verification record](docs/verification.md).
 
-`make demo-down` intentionally deletes this demo database and encryption key. Other Docker projects and real clusters are untouched. See [security and operations](docs/security.md), [organisation OIDC checklist](docs/organisation-sso.md), [architecture decisions](docs/adr-001.md), [the gateway decision](docs/adr-002.md), and [OpenAPI](docs/openapi.json).
+`make demo-down` intentionally deletes both demo databases, demo identities, private migration backups, and the encryption key. Use `docker compose stop` to pause the containers while preserving data; run `make demo-up` to resume. Other Docker projects and real clusters are untouched. See [security and operations](docs/security.md), [organisation OIDC checklist](docs/organisation-sso.md), [architecture decisions](docs/adr-001.md), [the gateway decision](docs/adr-002.md), and [OpenAPI](docs/openapi.json).
 
 ## Configuration
 

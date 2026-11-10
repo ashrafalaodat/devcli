@@ -98,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /v1/sessions", s.book)
 	m.HandleFunc("POST /v1/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
 		e := s.Store.Stop(r.Context(), user(r), r.PathValue("id"), "holder ended booking; gateway requests denied; workloads retained", false)
+		if errors.Is(e, store.ErrForbidden) {
+			fail(w, http.StatusForbidden, "only the original session owner can stop this booking; check devctl whoami and your profile, or ask an administrator to release it")
+			return
+		}
 		respond(w, e, map[string]string{"status": "released"})
 	})
 	m.HandleFunc("POST /v1/sessions/{id}/share", s.share)

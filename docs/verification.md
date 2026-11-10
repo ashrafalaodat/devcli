@@ -1,5 +1,17 @@
 # Gateway verification record
 
+## 2026-11-09: demo identity persistence
+
+A recreated Keycloak container imported Alice with a new OIDC subject while PostgreSQL retained a booking owned by her earlier subject. The ownership rejection was correct. The orphaned booking was released through the authenticated administrator endpoint with an audit reason; no Kubernetes resources were changed.
+
+Keycloak now stores its development H2 database in a named volume. Startup migrates an existing container's stopped database before recreating it, retaining a private backup and refusing to overwrite unknown volume data. A real migration and container recreation preserved the administrator's subject on a fresh Authorization Code login; Alice's existing login also remained valid. Running the migration again was a no-op. A separate disposable volume confirmed that a fresh volume is writable by Keycloak's UID 1000, and that test volume was removed.
+
+`make test`, `make test-db`, and `make demo-test` passed with `GOTMPDIR=/local/workspace/devctl-tmp`. The end-to-end suite completed in 7.46 seconds. The new PostgreSQL test proves that matching names/emails do not transfer ownership across subjects or issuers, while explicit administrator release records the actor/reason and frees the reservation. Shell syntax, Compose configuration, and `git diff --check` also passed. Read-only `/version` probes against the supplied remote kubeconfigs found two reachable clusters and two TLS verification failures; verification was not disabled and no cluster resources were modified.
+
+Failure paths for unknown/incomplete migration volumes and production identity-provider recovery were not exercised against live services. H2 remains a local development choice; production identity-provider deployment is deferred.
+
+## 2026-11-07: gateway implementation
+
 Recorded 2026-11-07 for the updated **server-side Kubernetes gateway** architecture. This supersedes the earlier direct kubeconfig-download implementation. No company cluster was contacted or changed during this update, and no corporate identity provider was configured. No real shell startup file was edited.
 
 ## Implemented and tested
