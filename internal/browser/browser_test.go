@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -368,7 +369,7 @@ func TestBrowserCookieAPIAndLogout(t *testing.T) {
 	if json.Unmarshal(w.Body.Bytes(), &booking) != nil {
 		t.Fatal("invalid booking response")
 	}
-	_, secret, err := b.db.CreatePAT(t.Context(), metadata.User, "browser test", time.Hour)
+	pat, secret, err := b.db.CreatePAT(t.Context(), metadata.User, "browser test", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,11 +393,26 @@ func TestBrowserCookieAPIAndLogout(t *testing.T) {
 	if err = b.db.Access(t.Context(), metadata.User, booking.ID); err == nil {
 		t.Fatal("logout retained booking access")
 	}
-	if _, err = b.db.VerifyPAT(t.Context(), secret); err == nil {
-		t.Fatal("logout retained PAT access")
+	verified, err := b.db.VerifyPAT(t.Context(), secret)
+	if err != nil || verified.Key() != metadata.User.Key() || !verified.TokenExpiresAt.Equal(pat.ExpiresAt) {
+		t.Fatal("browser logout revoked or changed the PAT", err)
+	}
+	if _, _, err = b.db.Primary(t.Context(), verified); !errors.Is(err, store.ErrNoPrimary) {
+		t.Fatal("preserved PAT retained a booking after browser logout", err)
 	}
 	if w := browserCall(b.h, c, "GET", "/web/session", "", "", ""); w.Code != 401 {
 		t.Fatal("logged-out cookie still valid")
+	}
+	newBooking, _, err := b.db.Book(t.Context(), metadata.User, model.Booking{Cluster: "browser-test"}, "after-browser-logout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err = b.db.VerifyPAT(t.Context(), secret)
+	if err != nil {
+		t.Fatal("saved PAT did not survive explicit rebooking", err)
+	}
+	if primary, _, err := b.db.Primary(t.Context(), verified); err != nil || primary.ID != newBooking.ID {
+		t.Fatal("saved PAT did not follow the new primary", err)
 	}
 }
 

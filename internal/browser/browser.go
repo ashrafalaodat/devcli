@@ -375,5 +375,5 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		reject(w, 503, "browser signed out, but booking release or session revocation failed; sign in again to verify")
 		return
 	}
-	jsonReply(w, 200, map[string]string{"status": "signed out; your bookings released and PATs revoked; workloads retained"})
+	jsonReply(w, 200, map[string]string{"status": "signed out; your bookings released and PATs preserved; workloads retained"})
 }

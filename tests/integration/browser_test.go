@@ -330,7 +330,68 @@ func TestBrowserAccess(t *testing.T) {
 		t.Fatal("revoked browser PAT still works")
 	}
 	e.browserRequest(admin, "POST", "/v1/admin/sessions/"+second.ID+"/release", map[string]string{"reason": "browser integration release"}, 200)
+	// A different, still-valid PAT must survive browser logout. Keep its exact
+	// downloaded file so later access proves that neither reissuance nor another
+	// download is required after the developer explicitly books again.
+	var preserved struct {
+		PAT        store.PAT `json:"pat"`
+		Kubeconfig string    `json:"kubeconfig"`
+	}
+	if err = json.Unmarshal(e.browserRequest(alice, "POST", "/v1/pats", map[string]string{"name": "Preserved through logout", "ttl": "1h"}, 201), &preserved); err != nil {
+		t.Fatal(err)
+	}
+	configPath = filepath.Join(dir, "logout-preserved.yaml")
+	if err = os.WriteFile(configPath, []byte(preserved.Kubeconfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	preservedConfig, err := clientcmd.Load([]byte(preserved.Kubeconfig))
+	if err != nil {
+		t.Fatal("invalid preserved kubeconfig")
+	}
+	preservedSecret := preservedConfig.AuthInfos["devctl-personal-access"].Token
+	expectVersion("v1.36.0-browser-b")
 	e.browserRequest(alice, "POST", "/auth/logout", nil, 200)
 	e.browserRequest(alice, "GET", "/web/session", nil, 401)
+	var revokedAt *time.Time
+	var expiry time.Time
+	if err = db.Pool.QueryRow(t.Context(), "SELECT revoked_at,expires_at FROM personal_access_tokens WHERE id=$1", preserved.PAT.ID).Scan(&revokedAt, &expiry); err != nil {
+		t.Fatal(err)
+	}
+	if revokedAt != nil || !expiry.Equal(preserved.PAT.ExpiresAt) {
+		t.Fatal("browser logout revoked the PAT or changed its expiry")
+	}
+	if _, err = db.VerifyPAT(t.Context(), preservedSecret); err != nil {
+		t.Fatal("browser logout invalidated the retained PAT")
+	}
+	expectNoBooking()
+	refresh, _ := token["refresh_token"].(string)
+	if refresh == "" {
+		t.Fatal("provider refresh token is missing from the test's encrypted session")
+	}
+	provider, err := e.gatewayClient().PostForm(issuer+"/protocol/openid-connect/token", url.Values{"grant_type": {"refresh_token"}, "client_id": {"devctl-web"}, "refresh_token": {refresh}})
+	if err != nil {
+		t.Fatal("cannot check provider refresh-token revocation")
+	}
+	provider.Body.Close()
+	if provider.StatusCode != http.StatusBadRequest {
+		t.Fatal("browser logout retained its provider refresh token", provider.StatusCode)
+	}
+	aliceAgain := e.browserLogin("alice", true)
+	newBooking := session(t, e.browserRequest(aliceAgain, "POST", "/v1/sessions", model.Booking{Cluster: "web-other", TTL: "30m"}, 201))
+	expectVersion("v1.36.0-browser-b")
+	savedConfig, err = os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(savedConfig, []byte(preserved.Kubeconfig)) {
+		t.Fatal("logout or rebooking changed the saved PAT config")
+	}
+	e.browserRequest(aliceAgain, "DELETE", "/v1/pats/"+preserved.PAT.ID, nil, 200)
+	if _, err = version(); err == nil {
+		t.Fatal("explicitly revoked preserved PAT still works")
+	}
+	e.browserRequest(aliceAgain, "POST", "/v1/sessions/"+newBooking.ID+"/stop", nil, 200)
+	e.browserRequest(aliceAgain, "POST", "/auth/logout", nil, 200)
+	if _, err = db.VerifyPAT(t.Context(), preservedSecret); err == nil {
+		t.Fatal("later logout revived an explicitly revoked PAT")
+	}
+	t.Log("browser logout preserves PAT expiry and saved kubeconfig, ends bookings and OAuth login, and permits later explicit rebooking; explicit revocation still denies access")
 	t.Log("browser administrator registration/maintenance/audit/release/revocation and logout passed; no remote cluster touched")
 }

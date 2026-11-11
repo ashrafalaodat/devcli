@@ -10,7 +10,7 @@ const assets = path.resolve(__dirname, '../assets');
 const alice = {issuer: 'https://issuer.test', subject: 'alice', name: 'alice', display_name: 'Alice <img src=x onerror=alert(1)>', email: 'alice@example.test', admin: false};
 const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'admin', display_name: 'Administrator', email: 'admin@example.test', admin: true};
 const state = {
-  primary: 's-a', version: 1, defaultLimit: 1, override: 2, serial: 0, pats: [], mutations: [],
+  primary: 's-a', version: 1, defaultLimit: 1, override: 2, serial: 0, pats: [], mutations: [], signedOut: false,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: '2026-01-01T00:00:00Z', reason: 'fixture'})),
 };
 let origin;
@@ -28,6 +28,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, {'Content-Type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html'}); res.end(fs.readFileSync(path.join(assets, name))); return;
     }
     if (req.method === 'GET') {
+      if (url.pathname === '/web/session' && state.signedOut && !admin) { reply(res, 401, {error: 'signed out'}); return; }
       const routes = {
         '/web/session': {user: admin ? administrator : alice, owner_id: admin ? 'admin' : 'alice', csrf_token: admin ? 'csrf-admin' : 'csrf-alice', expires_at: '2099-01-01T00:00:00Z'},
         '/v1/profile': profile(admin), '/v1/clusters': clusters(), '/v1/sessions': sessionRows(), '/v1/pats': state.pats,
@@ -42,6 +43,11 @@ const server = http.createServer(async (req, res) => {
     assert.equal(req.headers.origin, origin, 'mutation must retain same Origin');
     assert.equal(req.headers['x-csrf-token'], admin ? 'csrf-admin' : 'csrf-alice', 'mutation must send CSRF token');
     state.mutations.push({path: url.pathname, method: req.method, body});
+    if (url.pathname === '/auth/logout' && req.method === 'POST') {
+      for (const session of state.sessions) if (session.owner === 'alice' && session.state === 'ACTIVE') session.state = 'RELEASED';
+      state.primary = null; state.version++; state.signedOut = true;
+      reply(res, 200, {status: 'signed out; bookings released; PATs preserved'}); return;
+    }
     if (url.pathname === '/v1/primary') {
       const selection = state.sessions.find(s => s.cluster === body.cluster && s.state === 'ACTIVE'); assert.ok(selection);
       state.primary = selection.id; state.version++; reply(res, 200, profile(admin)); return;
@@ -70,8 +76,8 @@ const server = http.createServer(async (req, res) => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({headless: true, executablePath: process.env.CHROME_PATH || '/opt/google/chrome/chrome'});
   try {
-    const context = await browser.newContext({acceptDownloads: true}); const page = await context.newPage(); const errors = [];
-    page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => dialog.accept());
+    const context = await browser.newContext({acceptDownloads: true}); const page = await context.newPage(); const errors = [], dialogs = [];
+    page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => { dialogs.push(dialog.message()); return dialog.accept(); });
     await page.goto(origin, {waitUntil: 'domcontentloaded'}); await page.locator('#workspace').waitFor({state: 'visible'});
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster A'}).waitFor();
     assert.equal(await page.locator('#admin-nav').isVisible(), false); assert.equal(await page.locator('#identity img').count(), 0);
@@ -95,7 +101,7 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole('button', {name: 'Access & tokens', exact: false}).click(); await page.getByRole('cell', {name: 'Follows primary cluster'}).waitFor();
     assert.deepEqual(await page.evaluate(() => ({local: localStorage.length, session: sessionStorage.length})), {local: 0, session: 0});
     await page.setViewportSize({width: 390, height: 844}); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    assert.deepEqual(errors, []); await context.close();
+    assert.deepEqual(errors, []);
     const adminContext = await browser.newContext({extraHTTPHeaders: {'X-UI-Test-Role': 'admin'}}); const adminPage = await adminContext.newPage(); adminPage.on('dialog', dialog => dialog.accept());
     await adminPage.goto(origin, {waitUntil: 'domcontentloaded'}); await adminPage.locator('#workspace').waitFor({state: 'visible'});
     await adminPage.getByRole('button', {name: 'Administration', exact: false}).click(); await adminPage.locator('#developer-list table').waitFor();
@@ -106,6 +112,17 @@ const server = http.createServer(async (req, res) => {
     row = adminPage.locator('#developer-list tbody tr').first(); await row.locator('input[name=max_bookings]').fill(''); await row.locator('input[name=reason]').fill('UI inherit test'); await row.getByRole('button', {name: 'Save limit'}).click();
     await adminPage.getByRole('cell', {name: '1 / 3', exact: true}).waitFor(); assert.equal(state.mutations.at(-1).body.max_bookings, null);
     assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 1); await adminContext.close();
-    console.log('Primary UI contracts passed: limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, CSRF, text escaping, storage and mobile layout.');
+    const beforeLogoutPATs = structuredClone(state.pats), beforeLogoutDeletes = state.mutations.filter(r => r.method === 'DELETE').length;
+    await page.getByRole('button', {name: 'Sign out', exact: true}).click();
+    await page.locator('#welcome').waitFor({state: 'visible'});
+    assert.ok(dialogs.at(-1).includes('Your PATs will remain valid.'));
+    assert.equal(dialogs.at(-1).includes('will be revoked'), false);
+    assert.ok((await page.locator('#notification').innerText()).includes('Your PATs remain valid.'));
+    assert.deepEqual(state.pats, beforeLogoutPATs, 'sign-out must not revoke or extend PATs');
+    assert.equal(state.mutations.filter(r => r.method === 'DELETE').length, beforeLogoutDeletes, 'sign-out must not call PAT revocation');
+    assert.equal(state.mutations.at(-1).path, '/auth/logout');
+    assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 0);
+    assert.deepEqual(errors, []); await context.close();
+    console.log('Primary UI contracts passed: limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => {console.error(error.stack); server.close(); process.exitCode = 1;});

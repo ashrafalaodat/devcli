@@ -122,7 +122,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("POST /v1/logout", func(w http.ResponseWriter, r *http.Request) {
 		e := s.Store.Logout(r.Context(), user(r))
-		respond(w, e, map[string]string{"status": "all your bookings released"})
+		respond(w, e, map[string]string{"status": "all your bookings released; personal access tokens preserved"})
 	})
 	m.HandleFunc("POST /v1/pats", s.createPAT)
 	m.HandleFunc("GET /v1/pats", s.listPATs)

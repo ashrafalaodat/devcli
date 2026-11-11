@@ -1007,7 +1007,7 @@
     "/v1/logout": {
       "post": {
         "summary": "Release all active bookings owned by authenticated identity",
-        "description": "Release all bookings and revoke all PATs for this issuer/subject identity. Other developers\u2019 reservations and all Kubernetes workloads remain. Local/provider cleanup is performed by the calling client or browser logout flow.",
+        "description": "Release all bookings for this issuer/subject identity without revoking personal access tokens. PAT expiry is unchanged, and a valid PAT can access a later explicitly booked primary. Other developers\u2019 reservations and all Kubernetes workloads remain. Local/provider OAuth cleanup is performed by the calling client or browser logout flow.",
         "responses": {
           "200": {
             "description": "Success",
@@ -1561,7 +1561,7 @@
             "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
-        "description": "May be issued with no active booking. Carries only a gateway PAT and public connection metadata. The same PAT follows current primary across explicit booking/selection changes, until token expiry/revocation/logout. No session_id is accepted; its expiry is independent of reservation TTL."
+        "description": "May be issued with no active booking. Carries only a gateway PAT and public connection metadata. The same PAT follows current primary across explicit booking/selection changes, until its own expiry or explicit revocation. Logout releases bookings but does not revoke the PAT. No session_id is accepted; its expiry is independent of reservation TTL."
       }
     },
     "/v1/pats/{id}": {
@@ -1772,7 +1772,7 @@
     },
     "/auth/logout": {
       "post": {
-        "summary": "Clear browser session, attempt refresh-token revocation, release own bookings and revoke own PATs",
+        "summary": "Clear browser session, attempt OAuth refresh-token revocation and release own bookings; preserve PATs",
         "responses": {
           "200": {
             "description": "Success",
@@ -1804,7 +1804,8 @@
           {
             "browserSession": []
           }
-        ]
+        ],
+        "description": "Signing out removes the current browser authentication session, releases all bookings for this identity and attempts provider-supported OAuth refresh-token revocation. Personal access tokens are not revoked or renewed; they remain valid until their own expiry or explicit owner/administrator revocation. Without a new explicit booking, the gateway denies access because there is no primary cluster."
       }
     },
     "/v1/profile": {

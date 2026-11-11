@@ -177,6 +177,69 @@ func TestPersonalConfigWorksWithStockKubectl(t *testing.T) {
 	}
 }
 
+func TestLogoutPreservesPersonalCredentialsForExplicitRebooking(t *testing.T) {
+	g := newGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"gitVersion":"v1.35.1"}`)
+	}), false)
+	live := createPersonal(t, g, "alice")
+	liveSecret := personalSecret(t, live)
+	expired := createPersonal(t, g, "alice")
+	expiredSecret := personalSecret(t, expired)
+	revoked := createPersonal(t, g, "alice")
+	revokedSecret := personalSecret(t, revoked)
+	if _, err := g.db.Pool.Exec(t.Context(), "UPDATE personal_access_tokens SET created_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 hour' WHERE id=$1", expired.PAT.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.db.RevokePAT(t.Context(), g.alice, revoked.PAT.ID, "explicit revocation before logout"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		expectAPI(t, g, "POST", "/v1/logout", "alice", "", http.StatusOK)
+	}
+	var revokedAt *time.Time
+	var expiry time.Time
+	if err := g.db.Pool.QueryRow(t.Context(), "SELECT revoked_at,expires_at FROM personal_access_tokens WHERE id=$1", live.PAT.ID).Scan(&revokedAt, &expiry); err != nil {
+		t.Fatal(err)
+	}
+	if revokedAt != nil || !expiry.Equal(live.PAT.ExpiresAt) {
+		t.Fatal("logout revoked or changed the lifetime of a personal credential")
+	}
+	if _, err := g.db.VerifyPAT(t.Context(), liveSecret); err != nil {
+		t.Fatal("logout invalidated a live PAT", err)
+	}
+	profile, err := g.db.Profile(t.Context(), g.alice)
+	if err != nil || profile.PrimarySession != nil || profile.ActiveBookings != 0 {
+		t.Fatal("logout retained bookings or a primary", err)
+	}
+	body := expectAPI(t, g, "GET", "/k8s/version", liveSecret, "", http.StatusForbidden)
+	if !strings.Contains(body, "no cluster is booked") {
+		t.Fatal("preserved PAT should report a missing booking, not invalid authentication")
+	}
+	for _, secret := range []string{expiredSecret, revokedSecret} {
+		expectAPI(t, g, "GET", "/k8s/version", secret, "", http.StatusUnauthorized)
+	}
+	// A deliberate authenticated reservation restores gateway access through the
+	// exact same PAT and kubeconfig; logout never allocates this replacement.
+	req, err := http.NewRequest(http.MethodPost, g.frontend.URL+"/v1/sessions", strings.NewReader(`{"cluster":"cluster"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer alice")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "explicit-booking-after-logout")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readResponse(t, response)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatal("explicit rebooking after logout failed", response.StatusCode)
+	}
+	expectAPI(t, g, "GET", "/k8s/version", liveSecret, "", http.StatusOK)
+	expectAPI(t, g, "DELETE", "/v1/pats/"+live.PAT.ID, "alice", "", http.StatusOK)
+	expectAPI(t, g, "GET", "/k8s/version", liveSecret, "", http.StatusUnauthorized)
+}
+
 func TestPersonalGatewayStreamRevocation(t *testing.T) {
 	for _, end := range []string{"revoke", "expiry", "session-stop", "logout", "db-unavailable"} {
 		t.Run(end, func(t *testing.T) {
@@ -218,6 +281,11 @@ func TestPersonalGatewayStreamRevocation(t *testing.T) {
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("PAT stream did not close")
+			}
+			if end == "logout" {
+				if _, err = g.db.VerifyPAT(t.Context(), secret); err != nil {
+					t.Fatal("logout closed the stream by revoking the PAT instead of ending its booking", err)
+				}
 			}
 		})
 	}

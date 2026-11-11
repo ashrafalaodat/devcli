@@ -354,7 +354,7 @@ func newCommand(c *Client) *cobra.Command {
 		}
 		return nil
 	}})
-	root.AddCommand(&cobra.Command{Use: "logout", Short: "Release your bookings, revoke refresh token where supported, clear local login", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "logout", Short: "Release bookings and clear SSO login without revoking PATs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
 		defer cancel()
 		t, tokenErr := c.Login.token(ctx)
@@ -392,7 +392,7 @@ func newCommand(c *Client) *cobra.Command {
 		if releaseErr != nil {
 			return releaseErr
 		}
-		return c.print(map[string]string{"status": "logged out; bookings released"})
+		return c.print(map[string]string{"status": "logged out; bookings released; personal access tokens preserved"})
 	}})
 	c.addGatewayCommands(root)
 	c.addAdmin(root)

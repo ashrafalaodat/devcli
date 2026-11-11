@@ -21,7 +21,7 @@ Original Kubernetes kubeconfigs remain on the backend. The gateway uses the impo
 - Only the controlling holder can enable or disable sharing. Disabling sharing blocks new joins without evicting current holders. If the controlling holder leaves, the oldest participant becomes controller and sharing resets to private.
 - Bookings last until stop or logout unless an optional TTL is supplied (1m through 168h). Closing a terminal/browser or missing heartbeats does not release them. Lowering a booking limit preserves existing bookings and blocks new ones until the developer is below the limit.
 - Unavailable requests fail immediately; this MVP does not queue. Requests with the same idempotency key and parameters return the original booking, including after it ends. Allocation, limits and primary changes use PostgreSQL transaction locks across backend instances.
-- Logout releases **all bookings** and revokes **all PATs** belonging to that identity. Other developers' bookings and Kubernetes workloads remain.
+- Logout releases **all bookings** belonging to that identity and clears the current login, but **does not revoke PATs**. Other developers' bookings and Kubernetes workloads remain.
 
 ## Upgrade from session-specific kubeconfigs
 
@@ -155,7 +155,7 @@ kubectl get namespaces
 
 Switch primary using the overview cards and run kubectl again with that same file. A downloaded PAT is bound to the developer, not to a booking: it remains valid through stopping a booking and booking another, until its own expiry or revocation. With no booking, the gateway returns **“no cluster is booked”**. The PAT cannot book, switch primary, call the control/admin API, or issue other credentials.
 
-PAT lifetime defaults to 8h with a 168h maximum. It does not refresh itself or extend a booking. Obtain a replacement through SSO after expiry or revocation. Treat the file as a credential; browser downloads cannot guarantee 0600 permissions. Revoking the PAT ends that credential's gateway requests and streams but leaves bookings intact. Logout revokes all of the identity's PATs and releases all bookings.
+PAT lifetime defaults to 8h with a 168h maximum. It does not refresh itself or extend a booking. Obtain a replacement through SSO after expiry or revocation. Treat the file as a credential; browser downloads cannot guarantee 0600 permissions. Revoking the PAT ends that credential's gateway requests and streams but leaves bookings intact. Logout releases all bookings but preserves PATs. The same valid PAT works again after a new explicit booking; logout does not extend its expiry. Revoke a PAT explicitly when it is no longer wanted.
 
 The full CLI can also manage native-kubectl credentials:
 

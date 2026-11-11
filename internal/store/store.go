@@ -385,10 +385,7 @@ func (s *Store) Logout(ctx context.Context, u model.Identity) error {
 				}
 			}
 		}
-		if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE owner_id=$1", u.Key()); e != nil {
-			return e
-		}
-		return t.audit(ctx, u.Key(), "logout", u.Key(), "released all bookings and revoked all personal gateway credentials for this identity")
+		return t.audit(ctx, u.Key(), "logout", u.Key(), "released all bookings; personal gateway credentials preserved")
 	})
 }
 func (s *Store) Renew(ctx context.Context, u model.Identity, id string, ttl time.Duration) error {

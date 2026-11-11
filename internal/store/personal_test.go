@@ -90,8 +90,8 @@ func TestPATDeveloperScopeDigestAndRecovery(t *testing.T) {
 	}
 }
 
-func TestPATExpiryLogoutAndAdminRevocation(t *testing.T) {
-	for _, end := range []string{"expiry", "logout", "admin"} {
+func TestPATExpiryAndAdminRevocation(t *testing.T) {
+	for _, end := range []string{"expiry", "admin"} {
 		t.Run(end, func(t *testing.T) {
 			s, _ := testutil.Database(t)
 			u, admin := identity("alice"), identity("admin")
@@ -103,8 +103,6 @@ func TestPATExpiryLogoutAndAdminRevocation(t *testing.T) {
 			switch end {
 			case "expiry":
 				_, err = s.Pool.Exec(ctx, "UPDATE personal_access_tokens SET created_at=clock_timestamp()-interval '2h',expires_at=clock_timestamp()-interval '1h' WHERE id=$1", p.ID)
-			case "logout":
-				err = s.Logout(ctx, u)
 			case "admin":
 				if err = s.RevokePAT(ctx, admin, p.ID, ""); err == nil {
 					t.Fatal("administrator omitted reason")
@@ -118,6 +116,105 @@ func TestPATExpiryLogoutAndAdminRevocation(t *testing.T) {
 				t.Fatal("ended credential accepted")
 			}
 		})
+	}
+}
+
+func TestLogoutPreservesPATsAndReleasesBookings(t *testing.T) {
+	s, _ := testutil.Database(t)
+	alice, bob := identity("alice"), identity("bob")
+	register(t, s, "a")
+	register(t, s, "b")
+	a, _, err := s.Book(ctx, alice, model.Booking{Cluster: "a"}, "alice-before-logout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := s.Book(ctx, bob, model.Booking{Cluster: "b"}, "bob-before-logout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := make(map[string]string)
+	for _, name := range []string{"laptop", "workstation"} {
+		p, raw, err := s.CreatePAT(ctx, alice, name, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		live[p.ID] = raw
+	}
+	revoked, revokedSecret, err := s.CreatePAT(ctx, alice, "revoked", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RevokePAT(ctx, alice, revoked.ID, "owner explicit revocation"); err != nil {
+		t.Fatal(err)
+	}
+	expired, expiredSecret, err := s.CreatePAT(ctx, alice, "expired", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Pool.Exec(ctx, "UPDATE personal_access_tokens SET created_at=clock_timestamp()-interval '2h',expires_at=clock_timestamp()-interval '1h' WHERE id=$1", expired.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, bobSecret, err := s.CreatePAT(ctx, bob, "bob laptop", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.PATs(ctx, alice, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = s.Logout(ctx, alice); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Access(ctx, alice, a.ID); err == nil {
+		t.Fatal("logout kept the old reservation active")
+	}
+	if _, _, err = s.Primary(ctx, alice); !errors.Is(err, store.ErrNoPrimary) {
+		t.Fatal("logout retained a primary booking", err)
+	}
+	if primary, _, err := s.Primary(ctx, bob); err != nil || primary.ID != b.ID {
+		t.Fatal("another developer's booking was changed", err)
+	}
+	if _, err = s.VerifyPAT(ctx, bobSecret); err != nil {
+		t.Fatal("another developer's PAT changed", err)
+	}
+	after, err := s.PATs(ctx, alice, false)
+	if err != nil || len(after) != len(before) {
+		t.Fatal("logout changed credential metadata", err)
+	}
+	for i, p := range after {
+		old := before[i]
+		if p.ID != old.ID || !p.CreatedAt.Equal(old.CreatedAt) || !p.ExpiresAt.Equal(old.ExpiresAt) ||
+			(p.RevokedAt == nil) != (old.RevokedAt == nil) ||
+			(p.RevokedAt != nil && !p.RevokedAt.Equal(*old.RevokedAt)) {
+			t.Fatal("logout changed credential lifetime or revocation")
+		}
+		if raw, ok := live[p.ID]; ok {
+			u, err := s.VerifyPAT(ctx, raw)
+			if err != nil || u.Key() != alice.Key() || !u.TokenExpiresAt.Equal(old.ExpiresAt) {
+				t.Fatal("logout invalidated or extended a live PAT", err)
+			}
+		}
+	}
+	for _, raw := range []string{revokedSecret, expiredSecret} {
+		if _, err = s.VerifyPAT(ctx, raw); err == nil {
+			t.Fatal("logout revived an expired or explicitly revoked credential")
+		}
+	}
+	newBooking, _, err := s.Book(ctx, alice, model.Booking{Cluster: "a"}, "alice-after-logout")
+	if err != nil || newBooking.ID == a.ID {
+		t.Fatal("explicit rebooking failed", err)
+	}
+	for _, raw := range live {
+		u, err := s.VerifyPAT(ctx, raw)
+		if err != nil {
+			t.Fatal("saved PAT no longer authenticates", err)
+		}
+		primary, _, err := s.Primary(ctx, u)
+		if err != nil || primary.ID != newBooking.ID {
+			t.Fatal("saved PAT cannot use the later primary booking", err)
+		}
 	}
 }
 

@@ -72,8 +72,8 @@
     const name = element('span', null, 'identity-name'); name.append(element('span', u.display_name || u.name || 'Developer'), element('small', u.email || u.name)); node.append(name);
     node.append(pill(u.admin ? 'Administrator' : 'Developer', 'neutral'));
     node.append(button('Sign out', 'text', async () => {
-      if (!window.confirm('Sign out and release ALL of your bookings? Your personal gateway tokens will be revoked. Kubernetes workloads will remain.')) return;
-      await api('/auth/logout', {method: 'POST'}); signedOut(); notify('Signed out. Your bookings were released and personal gateway tokens revoked.');
+      if (!window.confirm('Sign out and release ALL of your bookings? Your PATs will remain valid. Kubernetes workloads will remain.')) return;
+      await api('/auth/logout', {method: 'POST'}); signedOut(); notify('Signed out. Your bookings were released. Your PATs remain valid.');
     }));
     $('admin-nav').classList.toggle('hidden', !u.admin);
   }

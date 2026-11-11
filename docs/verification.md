@@ -1,5 +1,20 @@
 # Gateway verification record
 
+## 2026-11-11: PATs survive sign-out
+
+Logout now preserves personal access tokens and their original expiry. It still releases all of the identity's bookings, clears the current native/browser login and attempts provider-supported OAuth refresh-token revocation. With no booking the saved PAT config receives the no-booked-cluster error; after a fresh login and explicit booking, the same file works again. Explicit PAT revocation and expiry remain enforced, and logout never restores an already revoked or expired PAT. This supersedes the logout/PAT-revocation behavior in earlier dated records below.
+
+Implemented and tested:
+
+- Real PostgreSQL store/browser regressions covered multiple live PATs through repeated logout, unchanged creation/expiry/revocation metadata, cleared primary/bookings, other-user isolation, explicit rebooking, expired/revoked denial, cleared browser cookie and provider refresh-token revocation. Focused race tests passed (store1.435s, browser1.306s).
+- API/gateway regressions passed with real PostgreSQL (2.110s): authenticated POSTlogout leaves PATs valid, returns403 no-booking rather than401 invalid credential, rebooking reuses the same PAT, and explicit revocation still returns401. Logout closes an existing stream because its reservation ended, while its PAT remains valid.
+- The real Keycloak browser integration passed (3.619s, test2.60s). It saved a PAT kubeconfig before sign-out, proved its validity and expiry survived, rejected the old browser cookie and revoked provider refresh token, completed a fresh browser SSO login, explicitly booked again, and used the identical saved file. Explicit revocation denied access and a later logout did not revive the credential. Only disposable local identity-provider/API fixtures and isolated PostgreSQL schemas were used.
+- The durable headless UI regression passed: sign-out confirmation and success messages describe PAT preservation, no PAT DELETE request is sent, token metadata/expiry stay unchanged and bookings are released. The two sentences previously removed from the download callout remain absent.
+
+Commands actually executed: `make build`, `make test` (race tests; external-service cases skip without their environment), `make test-db` (store5.585s, API9.511s, browser2.379s), focused store/browser/API race tests, `./scripts/browser-test.sh`, JavaScript/OpenAPI syntax checks, the headless UI driver and `git diff --check`. Temporary Go/test files used `/local/workspace/devctl-tmp`.
+
+No migration or token resurrection was introduced. The demo host backend was rebuilt/restarted and its served HTML checked for the corrected sign-out statement; Keycloak and PostgreSQL containers were not recreated. No normal demo logout or remote Kubernetes request was used for validation. Corporate OIDC and real-cluster workload behavior remain outside the tests executed for this change.
+
 ## 2026-11-11: developer booking limits and one primary-cluster config
 
 Implemented and tested:
