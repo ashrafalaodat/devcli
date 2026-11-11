@@ -171,6 +171,9 @@ func (t *Tx) expire(ctx context.Context) error {
 		return e
 	}
 	for _, v := range items {
+		if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE session_id=$1", v.id); e != nil {
+			return e
+		}
 		if e = t.repair(ctx, v.cluster); e != nil {
 			return e
 		}
@@ -341,6 +344,9 @@ func (t *Tx) stop(ctx context.Context, u model.Identity, id, reason string, forc
 	if _, e = t.Exec(ctx, "UPDATE sessions SET state='RELEASED',ended_at=clock_timestamp(),reason=$2 WHERE id=$1", id, reason); e != nil {
 		return e
 	}
+	if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE session_id=$1", id); e != nil {
+		return e
+	}
 	if e = t.repair(ctx, cluster); e != nil {
 		return e
 	}
@@ -362,7 +368,10 @@ func (s *Store) Logout(ctx context.Context, u model.Identity) error {
 				}
 			}
 		}
-		return t.audit(ctx, u.Key(), "logout", u.Key(), "released all bookings for this identity")
+		if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE owner_id=$1", u.Key()); e != nil {
+			return e
+		}
+		return t.audit(ctx, u.Key(), "logout", u.Key(), "released all bookings and revoked all personal gateway credentials for this identity")
 	})
 }
 func (s *Store) Renew(ctx context.Context, u model.Identity, id string, ttl time.Duration) error {

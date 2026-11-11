@@ -13,6 +13,12 @@ An IT administrator should:
 7. Configure both backend and CLI with matching issuer/client/claim settings. Set the developer-facing HTTPS `DEVCTL_PUBLIC_URL` and optional public gateway CA bundle on the backend, and set `DEVCTL_API_CA_FILE` on the CLI for a private backend CA; generated gateway kubeconfigs contain public connection metadata and a devctl credential-plugin invocation, never original cluster credentials. Run login, whoami, expiry, refresh, logout, wrong-audience, wrong-issuer, ID-token rejection, and unapproved-user checks in an approved staging environment. Verify tokens are absent from logs.
 8. Confirm that logout releases all devctl bookings for the identity, clears local login, and attempts provider-advertised refresh-token revocation. It does not necessarily end the browser's SSO session or revoke previously issued access tokens. Gateway requests for a released session are denied even if a client retains its OIDC token; ongoing streams are terminated after backend revalidation. Separately, this does not revoke legacy original Kubernetes credentials held outside the gateway.
 9. For automatic kubectl access, approve refresh-token rotation and both idle and absolute session limits. New demo realms use ten-minute access tokens, one day of SSO inactivity, and a seven-day absolute session maximum. Existing persistent Keycloak realms are not overwritten by startup imports: update those policy values through provider administration if desired. Test concurrent refreshes and rotation under the actual provider. Kubernetes activity permits the helper to renew authentication; it does not bypass provider limits, automatically renew a booking lease, or establish human presence. Test a long-running connection across a fresh-token heartbeat and confirm stop/logout/expiry still close it.
+10. Register a separate browser client (`devctl-web` by default), with Authorization Code, mandatory PKCE S256, the same API audience and group mapper, and an exact redirect such as `https://devctl.example.test/auth/callback`. The local demo redirect is `https://127.0.0.1:9090/auth/callback`. Set `DEVCTL_WEB_CLIENT_ID` and, if the organisation requires a confidential web client, `DEVCTL_WEB_CLIENT_SECRET` on the backend only. Never add that secret to CLI/plugin configuration. Configure private CA trust in the browser and use the exact public origin; cookie mutations validate Origin. Approve `DEVCTL_WEB_SESSION_TTL` (default 8h absolute).
+11. Review browser-issued PAT policy separately from OAuth refresh policy. PATs are gateway-only, scoped to one owned booking, individually revocable and valid for 8h by default (maximum 168h, capped by booking expiry). They have no refresh token and do not renew themselves. Their purpose is native kubectl access without installing a helper. A provider account/group removal does not directly revoke existing PATs: include application-side PAT revocation and booking release in the offboarding checklist. The UI's administrator credential view and audit list support this process.
+
+The plugin uses the same approved native client, credential store, refresh locking and rotation as the full CLI. Its smaller command set is a user-interface choice, not a new security role: authorization always comes from validated provider claims on the backend. Browser administration uses SSO; a downloaded PAT cannot authorize an admin action.
+
+For an existing persistent local Keycloak realm, sign into the development admin console and import `deploy/keycloak-web-client.json` under **Clients → Import client**. This adds the browser client without recreating the realm, changing user subjects, or losing reservations. Fresh demo realms include the client automatically. Do not delete identity-provider or PostgreSQL volumes to add this client.
 
 Example shared environment configuration (use actual approved values):
 
@@ -31,6 +37,8 @@ export DEVCTL_OIDC_CONFIG='{
   "access_value": "Bearer"
 }'
 export DEVCTL_API='https://devctl.example.test'
+export DEVCTL_WEB_CLIENT_ID='devctl-web' # backend
+export DEVCTL_WEB_SESSION_TTL='8h'       # backend
 # If the gateway uses a private CA not already trusted by the OS:
 # export DEVCTL_API_CA_FILE='/path/to/public-devctl-ca.pem'
 unset DEVCTL_DEV_HTTP DEVCTL_DEV_TOKEN_FILE

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>devctl · Cluster reservations</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="devctl home"><span class="brand-icon" aria-hidden="true">›_</span><span>devctl<span class="brand-sub">development environments</span></span></a>
+    <div id="identity" class="identity"><span class="pill neutral">Connecting…</span></div>
+  </header>
+  <div id="notification" class="notification hidden" role="status" aria-live="polite"></div>
+  <main id="main">
+    <section id="welcome" class="welcome hidden" aria-labelledby="welcome-title">
+      <div class="eyebrow">YOUR TEAM'S DEVELOPMENT CLUSTERS</div>
+      <h1 id="welcome-title">A cluster to call your own.</h1>
+      <p class="welcome-copy">Book an environment, see who is using it, and get straight to work. Keep your existing kubectl workflow.</p>
+      <a class="button primary large" href="/auth/login">Sign in with SSO <span aria-hidden="true">↗</span></a>
+      <p class="subtle">Organisation access is experimental. Your administrator controls who can sign in.</p>
+      <div class="welcome-options">
+        <article><span class="option-number">01</span><h2>Full CLI</h2><p>Manage bookings, sharing, and administration from your terminal.</p></article>
+        <article><span class="option-number">02</span><h2>kubectl plugin</h2><p>A small login helper with automatic token refresh for everyday kubectl use.</p></article>
+        <article><span class="option-number">03</span><h2>Browser only</h2><p>Sign in here and download a personal gateway kubeconfig. No extra client to install.</p></article>
+      </div>
+    </section>
+    <div id="workspace" class="workspace hidden">
+      <nav class="sidebar" aria-label="Main navigation">
+        <div class="nav-label">WORKSPACE</div>
+        <button type="button" class="nav-item active" data-section="overview" aria-current="page"><span aria-hidden="true">◫</span> Overview</button>
+        <button type="button" class="nav-item" data-section="clusters"><span aria-hidden="true">◇</span> Clusters</button>
+        <button type="button" class="nav-item" data-section="access"><span aria-hidden="true">⌘</span> Access &amp; tokens</button>
+        <div id="admin-nav" class="hidden"><div class="nav-label">ADMINISTRATION</div><button type="button" class="nav-item" data-section="admin"><span aria-hidden="true">⚙</span> Administration</button></div>
+        <div class="sidebar-note"><span class="status-dot" aria-hidden="true"></span> Original cluster credentials stay on the server.</div>
+      </nav>
+      <div class="content">
+        <section id="section-overview" class="page-section" aria-labelledby="overview-title">
+          <div class="page-heading"><div><div class="eyebrow">WORKSPACE</div><h1 id="overview-title">Your environments</h1><p>Reserve a whole cluster. Share it when you choose.</p></div><button id="refresh-overview" type="button" class="button secondary">↻ Refresh</button></div>
+          <div id="metrics" class="metrics"></div>
+          <section class="panel booking-panel" aria-labelledby="booking-title"><div><h2 id="booking-title">Book a cluster</h2><p>A free cluster is exclusive to you. Existing holders must enable sharing before anyone can join.</p></div>
+            <form id="booking-form" class="form-grid">
+              <label>Cluster<select id="booking-cluster" name="cluster"><option value="">Choose automatically</option></select></label>
+              <label>Required labels<input name="selector" placeholder="region=eu,type=test" autocomplete="off"><span class="field-help">Optional, comma-separated key=value pairs</span></label>
+              <label>Booking duration<input name="ttl" placeholder="Until stop or logout" autocomplete="off"><span class="field-help">Optional: 4h, 24h, up to 168h</span></label>
+              <button class="button primary align-start" type="submit">Book cluster <span aria-hidden="true">→</span></button>
+            </form>
+          </section>
+          <div class="section-heading"><h2>Your active bookings</h2><span id="booking-count" class="pill neutral">0 active</span></div>
+          <div id="my-bookings" class="booking-list"></div>
+          <div class="section-heading"><h2>Team bookings</h2><span class="subtle">Reach out before sharing an environment</span></div>
+          <div id="team-bookings" class="panel table-wrap"></div>
+          <details class="panel history"><summary>Booking history</summary><div id="booking-history" class="table-wrap"></div></details>
+        </section>
+        <section id="section-clusters" class="page-section hidden" aria-labelledby="clusters-title">
+          <div class="page-heading"><div><div class="eyebrow">CLUSTER REGISTRY</div><h1 id="clusters-title">Find your next environment</h1><p>Availability reflects reservations. Sharing is always controlled by the current holder.</p></div><button id="refresh-clusters" type="button" class="button secondary">↻ Refresh</button></div>
+          <div id="cluster-list" class="cluster-grid"></div>
+        </section>
+        <section id="section-access" class="page-section hidden" aria-labelledby="access-title">
+          <div class="page-heading"><div><div class="eyebrow">CONNECT YOUR TOOLS</div><h1 id="access-title">One backend. Three ways in.</h1><p>Choose the workflow that fits you. Each uses the same reservations and gateway.</p></div></div>
+          <div class="access-grid">
+            <article class="panel access-card"><span class="option-number">01 / FULL CONTROL</span><h2>Developer CLI</h2><p>Book, select, share, renew, and stop environments. Administrator commands are available to approved admins.</p><pre>devctl login
+export KUBECONFIG="$(devctl setup)"
+kubectl get pods
+devctl sessions</pre><span class="pill neutral">Client installation required</span></article>
+            <article class="panel access-card"><span class="option-number">02 / EVERYDAY KUBECTL</span><h2>kubectl plugin</h2><p>Log in and use the generated gateway configuration. The helper refreshes short-lived access tokens automatically.</p><pre>export KUBECONFIG="$(kubectl devctl login)"
+kubectl get pods</pre><span class="pill neutral">Plugin installation required</span></article>
+            <article class="panel access-card highlighted"><span class="option-number">03 / NO EXTRA INSTALLATION</span><h2>Browser kubeconfig</h2><p>Download a personal config for an active booking. Stock kubectl sends its PAT directly to the gateway.</p><pre>export KUBECONFIG=/path/to/download.yaml
+kubectl get namespaces</pre><span class="pill success">Only kubectl required</span></article>
+          </div>
+          <section class="panel" aria-labelledby="download-title"><h2 id="download-title">Create a browser kubeconfig</h2><p>This file contains a personal gateway access token. Treat it as a credential. Original cluster kubeconfigs never leave the backend.</p>
+            <form id="pat-form" class="form-grid">
+              <label>Your active booking<select id="pat-session" name="session_id" required><option value="">Select a booking</option></select></label>
+              <label>Credential name<input name="name" value="Browser kubeconfig" maxlength="100" required autocomplete="off"></label>
+              <label>Access duration<select name="ttl"><option value="8h">8 hours</option><option value="1h">1 hour</option><option value="24h">1 day</option><option value="168h">7 days</option></select></label>
+              <button class="button primary align-start" type="submit">Download kubeconfig <span aria-hidden="true">↓</span></button>
+            </form>
+            <p class="callout">PATs do not rotate or refresh themselves. Access ends when the PAT expires, is revoked, or the booking ends. Create a replacement here when needed. Revoking a PAT does not stop the booking.</p>
+          </section>
+          <div class="section-heading"><h2>Your gateway tokens</h2><button id="refresh-pats" class="button secondary" type="button">↻ Refresh</button></div>
+          <div id="pat-list" class="panel table-wrap"></div>
+        </section>
+        <section id="section-admin" class="page-section hidden" aria-labelledby="admin-title">
+          <div class="page-heading"><div><div class="eyebrow">ADMINISTRATION</div><h1 id="admin-title">Manage the workspace</h1><p>Administrative changes are audited. No action here deletes Kubernetes workloads.</p></div><button id="refresh-admin" class="button secondary" type="button">↻ Refresh</button></div>
+          <section class="panel" aria-labelledby="register-title"><h2 id="register-title">Register a cluster</h2><p>Import an approved, trusted kubeconfig. The server encrypts it before storage. Registration does not connect to or modify the cluster.</p>
+            <form id="register-form" class="form-grid">
+              <label>Cluster ID<input name="id" placeholder="dev-eu-01" pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}" required maxlength="63" autocomplete="off"></label>
+              <label>Display name<input name="name" placeholder="Development EU 01" required maxlength="128" autocomplete="off"></label>
+              <label>Maximum shared holders<input name="max_participants" type="number" min="2" max="10" value="2" required></label>
+              <label>Labels<input name="labels" placeholder="region=eu,type=test" autocomplete="off"></label>
+              <label class="span-two">Trusted kubeconfig file<input name="kubeconfig" type="file" required><span class="field-help">One selected context, embedded certificate data, and static credentials; no executable credential plugins.</span></label>
+              <button class="button primary align-start" type="submit">Register cluster</button>
+            </form>
+          </section>
+          <div class="section-heading"><h2>Cluster placement controls</h2></div><div id="maintenance-list" class="cluster-grid"></div>
+          <section class="panel" aria-labelledby="release-title"><h2 id="release-title">Release a booking</h2><p>End gateway access for a booking. Cluster workloads and credentials obtained outside devctl remain unchanged.</p>
+            <form id="release-form" class="form-grid">
+              <label>Active booking<select id="release-session" name="session_id" required><option value="">Select a booking</option></select></label>
+              <label class="span-two">Audit reason<input name="reason" placeholder="Owner requested release" required maxlength="500" autocomplete="off"></label>
+              <button class="button danger align-start" type="submit">Release booking</button>
+            </form>
+          </section>
+          <div class="section-heading"><h2>All gateway tokens</h2><span class="subtle">Administrators can revoke access without viewing token values</span></div><div id="admin-pat-list" class="panel table-wrap"></div>
+          <div class="section-heading"><h2>Audit activity</h2><span class="subtle">Latest 100 events</span></div><div id="audit-list" class="panel table-wrap"></div>
+        </section>
+        <footer>devctl <span aria-hidden="true">·</span> Whole-cluster reservations <span aria-hidden="true">·</span> Experimental organisation SSO</footer>
+      </div>
+    </div>
+  </main>
+  <noscript><p class="panel">JavaScript is required for this browser client. The devctl CLI remains available.</p></noscript>
+</body>
+</html>

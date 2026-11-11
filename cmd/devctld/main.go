@@ -4,6 +4,7 @@ import (
 	"context"
 	"devctl.local/devctl/internal/api"
 	"devctl.local/devctl/internal/auth"
+	"devctl.local/devctl/internal/browser"
 	"devctl.local/devctl/internal/kube"
 	"devctl.local/devctl/internal/store"
 	"encoding/base64"
@@ -101,7 +102,16 @@ func run() error {
 	if e != nil || recheck < 100*time.Millisecond || recheck > 30*time.Second {
 		return errors.New("gateway recheck interval must be 100ms through 30s")
 	}
-	srv := &http.Server{Addr: addr, Handler: (&api.Server{Store: db, Auth: verifier, Vault: vault, PublicURL: publicURL, GatewayCAData: gatewayCA, GatewayRecheckInterval: recheck}).Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	webTTL, e := time.ParseDuration(env("DEVCTL_WEB_SESSION_TTL", "8h"))
+	if e != nil {
+		return errors.New("invalid DEVCTL_WEB_SESSION_TTL")
+	}
+	core := (&api.Server{Store: db, Auth: verifier, Vault: vault, PublicURL: publicURL, GatewayCAData: gatewayCA, GatewayRecheckInterval: recheck}).Handler()
+	handler, e := browser.New(browser.Config{PublicURL: publicURL, ClientID: env("DEVCTL_WEB_CLIENT_ID", "devctl-web"), ClientSecret: os.Getenv("DEVCTL_WEB_CLIENT_SECRET"), SessionTTL: webTTL}, verifier, db, vault, core)
+	if e != nil {
+		return e
+	}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
 
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -114,6 +124,9 @@ func run() error {
 				task, done := context.WithTimeout(ctx, 10*time.Second)
 				if e := db.Expire(task); e != nil {
 					slog.Error("reservation expiry failed")
+				}
+				if e := db.PruneWebSessions(task); e != nil {
+					slog.Error("browser session expiry failed")
 				}
 				done()
 			}

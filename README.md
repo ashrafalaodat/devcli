@@ -1,8 +1,8 @@
 # devctl
 
-A Go backend and CLI for **booking existing Kubernetes clusters and using them through an authenticated API gateway**. PostgreSQL holds durable reservations, labels, participant identities, audit events, and encrypted upstream kubeconfigs. Experimental OIDC login uses a public CLI client and is tested with local Keycloak.
+A Go backend with a full CLI, a smaller kubectl plugin, and a browser UI for **booking existing Kubernetes clusters and using them through an authenticated API gateway**. PostgreSQL holds durable reservations, labels, participant identities, audit events, and encrypted upstream kubeconfigs. Experimental OIDC login uses Authorization Code with PKCE and local Keycloak.
 
-The original cluster kubeconfigs stay on the backend. A developer's local kubeconfig contains the gateway address, public TLS trust information, and an instruction to run the **devctl credential plugin**. It contains no upstream token or client private key. Kubectl runs locally and sends Kubernetes API requests through the gateway; the service does not execute arbitrary local shell commands.
+The original cluster kubeconfigs stay on the backend. CLI/plugin kubeconfigs contain public gateway metadata and an exec credential helper. Browser downloads contain a personal, revocable gateway token (PAT) instead, so stock kubectl works without installing another executable. Neither contains an upstream token or client private key. Kubectl runs locally and sends Kubernetes API requests through the gateway; the service does not execute arbitrary local shell commands.
 
 ```text
 local kubectl → devctl gateway → selected Kubernetes API
@@ -18,13 +18,67 @@ The gateway uses the permissions already present in the administrator-imported k
 - A booking is exclusive by default. A second booking is rejected with HTTP 409 / CLI exit 4 unless the controlling holder explicitly enabled sharing.
 - Sharing permits two simultaneous developers by default, configurable by administrators from 2 to 10. Participants see usernames, display names, email addresses, and session IDs so they can coordinate manually.
 - Only the controlling holder can enable/disable sharing. Disabling sharing prevents new joins without evicting participants. When the controller leaves, the oldest remaining holder becomes controller and sharing resets to private.
-- Sessions last until `stop` or `logout`. An optional `--ttl` from 1 minute through 168 hours expires a booking server-side. Closing a terminal does not log out; no CLI heartbeat is used.
+- Sessions last until `stop` or `logout`. An optional `--ttl` from 1 minute through 168 hours expires a booking server-side. Closing a terminal or missing a heartbeat does not release the cluster; activity heartbeats renew gateway authorization only.
 - `logout` releases **all bookings for the authenticated identity**, clears the current local login/selection, and attempts refresh-token revocation. Other participants' bookings remain active.
 - Unavailable requests fail immediately. This version does not queue requests; `wait` checks whether an existing booking is active.
 
 Stop, expiry, logout, and administrator release prevent new requests through that booking's gateway route. Long-running requests are also subject to backend authorization rechecks; work already accepted by Kubernetes is not rolled back. No workloads or data are deleted. Existing unmanaged kubeconfigs and original credentials distributed by earlier devctl versions can still bypass the gateway and must be handled separately.
 
-## Use normal kubectl commands
+## Choose an access method
+
+| Method | Local installation | Authentication | Controls |
+| --- | --- | --- | --- |
+| Full CLI | `devctl` | Short-lived access token, automatically refreshed with a stored refresh token | Book, select, share, renew, stop, credentials, and administrator commands |
+| kubectl plugin | `kubectl-devctl` | The same SSO, refresh rotation, and credential store as the CLI | Login, setup, status, logout; normal Kubernetes commands through kubectl |
+| Browser | Stock `kubectl` only | Browser SSO; downloaded kubeconfig carries one expiring, revocable PAT | Booking and credential controls in the UI, plus role-protected administrator actions |
+
+The smaller plugin command set is a convenience, not a separate authorization role. The backend always enforces the authenticated user's permissions. See [the three-client decision](docs/adr-004.md).
+
+### Browser: no extra executable
+
+Run `make demo-up`, then open **https://127.0.0.1:9090/** and trust the local public CA at `.demo/tls/ca.crt` through your browser's certificate settings. Do not disable TLS verification. Sign in with a development account, book an available cluster, and create/download a personal kubeconfig from that booking. The UI shows sharing participants and contact details, expiry, credential metadata and revocation controls.
+
+```bash
+chmod 600 ~/Downloads/devctl-SESSION_ID.yaml
+export KUBECONFIG="$HOME/Downloads/devctl-SESSION_ID.yaml"
+kubectl get namespaces
+```
+
+Use the actual downloaded filename. This YAML contains a sensitive **gateway-only PAT**, not the original cluster credentials. A PAT is tied to one owned active booking, defaults to eight hours, has a seven-day maximum, and is capped by booking expiry. It cannot call the reservation/admin API or refresh itself. After expiry, sign in through the browser and download a replacement. Revocation, logout or an ended booking blocks further gateway use and closes open connections after the normal authorization recheck. Removing a user's IdP group alone does not immediately revoke an existing PAT; administrators must revoke their credentials or release their bookings.
+
+Administrators see controls to register an approved static kubeconfig, change maintenance with a reason, release a booking with a reason, inspect audit events, and revoke personal credentials. Registration encrypts the imported file; these reservation/admin operations do not contact or modify the cluster. Selecting a file in the admin UI does not make it visible to ordinary developers.
+
+Browser logout releases all bookings and revokes all PATs for that identity, clears the current browser session, and attempts provider refresh-token revocation. It does not delete cluster workloads. Closing the browser alone does not log out.
+
+For an **existing persistent demo realm**, first open the Keycloak administration console at `http://127.0.0.1:8081/admin/`, select the `devctl` realm, and import `deploy/keycloak-web-client.json` under **Clients → Import client**. Fresh realms already include this client. Its exact approved callback is `https://127.0.0.1:9090/auth/callback`. Add the client without recreating the realm or deleting volumes: changing user subjects breaks ownership of existing reservations.
+
+When browsing a demo running on a remote server, forward local ports 9090 and 8081 to the same remote ports, keep the forwarding session open, and open the exact `https://127.0.0.1:9090/` URL. The browser callback needs no port 18000; that loopback port is used by CLI/plugin login only. Configure real deployments with reachable HTTPS gateway/issuer URLs and approved exact redirects.
+
+### Plugin: smaller terminal interface
+
+Build/distribute it with `make plugin-package`. Extract `dist/devctl-plugin-<os>-<arch>.tar.gz` on the client and run:
+
+```bash
+./install.sh --api https://devctl.example.test \
+  --issuer https://identity.example.test/realms/engineering --shell bash
+# For a private gateway CA, add --ca-file /path/to/public-gateway-ca.pem.
+```
+
+The archive contains only `kubectl-devctl` and its installer; it does not require `devctl`. The installer defaults to `~/.local/bin` and optionally installs the same explicit shell integration. Put that directory on PATH so kubectl can discover the plugin. On the local demo:
+
+```bash
+source .demo/env
+export PATH="$PWD/bin:$PATH"
+export KUBECONFIG="$(kubectl devctl login)"
+# Or choose a cluster: kubectl devctl login --cluster cluster-4196 --new-booking
+kubectl get namespaces
+kubectl devctl status
+kubectl devctl logout
+```
+
+`login` completes SSO when needed and books or reuses a compatible environment; stdout is only the config path. `kubectl devctl setup` prepares automatic first-use login without booking. Both configure kubectl to invoke the installed plugin itself for credentials. Access-token refresh and refresh-token rotation happen automatically outside the kubeconfig, using the OS credential store or an explicitly enabled development fallback. Use the full CLI or UI for sharing, renewal, stop and administrator controls.
+
+### Full CLI: normal kubectl commands and management
 
 The automatic workflow needs one setup step. After that, developers use ordinary kubectl commands; the configured credential helper handles login, allocation, and refresh. The backend REST API and Kubernetes gateway must use the same public HTTPS origin for this mode. Explicit session kubeconfigs still support the separately configured gateway origin.
 
@@ -171,6 +225,13 @@ devctl renew SESSION_ID --ttl 4h
 devctl admin maintenance dev-a --reason 'Manual maintenance'
 devctl admin maintenance dev-a --enabled=false --reason 'Maintenance complete'
 devctl admin release SESSION_ID --reason 'Owner requested manual release'
+
+# Optional native-kubectl credential management from the full CLI:
+devctl token create --session SESSION_ID --name laptop --ttl 8h
+# Prints only the path to a new 0600 PAT kubeconfig, never its contents.
+devctl token list
+devctl token revoke PAT_ID
+# Administrators revoking another user's PAT must also supply --reason.
 ```
 
 Retry with the same parameters and idempotency key to get the original reservation, including after it ends. A different request with that key is a conflict. The CLI prints its generated key to stderr so an interrupted request can be retried safely. Starting again without the key is a new request.
@@ -183,10 +244,11 @@ Maintenance prevents new bookings without evicting current holders. Administrati
 make test             # unit tests; database/Keycloak suites skip without configuration
 make test-db          # real PostgreSQL concurrency and API/gateway authorization tests
 make demo-test        # real PostgreSQL + Keycloak + CLI/backend; disposable TLS API fixture
+make browser-test     # isolated local Keycloak + browser SSO/PAT/native kubectl test
 make demo-down        # only this project's containers, volumes and .demo directory
 ```
 
-`demo-test` requires `demo-up` first. Tests create uniquely named PostgreSQL schemas and delete only those schemas. End-to-end tests use the real Keycloak Authorization Code + PKCE flow and a disposable TLS test server representing the Kubernetes API. Gateway forwarding and kubectl integration tests do not modify a real Kubernetes cluster. Mock API transport tests do not prove real-cluster CNI, admission, scheduling, workload behavior, or all Kubernetes streaming implementations; the exact checks actually run are in [the verification record](docs/verification.md).
+`demo-test` requires `demo-up` first. `browser-test` also uses the existing PostgreSQL service and local pinned Keycloak image, but starts a disposable identity-provider container on `127.0.0.1:18081` and a test gateway on `127.0.0.1:19090`; it removes that test container afterward and leaves the persistent demo realm untouched. Tests create uniquely named PostgreSQL schemas and delete only those schemas. End-to-end tests use the real Keycloak Authorization Code + PKCE flow and a disposable TLS test server representing the Kubernetes API. Gateway forwarding and kubectl integration tests do not modify a real Kubernetes cluster. Mock API transport tests do not prove real-cluster CNI, admission, scheduling, workload behavior, or all Kubernetes streaming implementations; the exact checks actually run are in [the verification record](docs/verification.md).
 
 `make demo-down` intentionally deletes both demo databases, demo identities, private migration backups, and the encryption key. Use `docker compose stop` to pause the containers while preserving data; run `make demo-up` to resume. Other Docker projects and real clusters are untouched. See [security and operations](docs/security.md), [organisation OIDC checklist](docs/organisation-sso.md), [architecture decisions](docs/adr-001.md), [the gateway decision](docs/adr-002.md), and [OpenAPI](docs/openapi.json).
 
@@ -205,6 +267,9 @@ Backend:
 | `DEVCTL_TLS_CERT`, `DEVCTL_TLS_KEY` | HTTPS listener certificate/key; required for non-loopback binding |
 | `DEVCTL_ISSUER` | Trusted OIDC issuer URL |
 | `DEVCTL_OIDC_CONFIG` | JSON overrides of issuer, client ID, API audience, scopes, redirect, group mapping and access-token marker |
+| `DEVCTL_WEB_CLIENT_ID` | Browser OIDC client; default `devctl-web`, separate from the native CLI/plugin client |
+| `DEVCTL_WEB_CLIENT_SECRET` | Optional confidential browser-client secret; backend only |
+| `DEVCTL_WEB_SESSION_TTL` | Absolute browser session duration, default `8h`, range `1m` through `168h` |
 | `DEVCTL_DEV_HTTP=1` | Explicit development-only HTTP issuer allowance; never permits an HTTP gateway kubeconfig |
 
 Developers need network access to the gateway and identity provider. The backend needs network access to each registered Kubernetes API and the identity provider, possibly through the company VPN. Normal gateway use does not require developers to reach the Kubernetes API directly. Both developer-facing gateway TLS and backend-to-cluster TLS are verified. The gateway intentionally uses HTTP/1.1 upstream so both WebSocket and SPDY upgrades work even when an API server advertises HTTP/2.

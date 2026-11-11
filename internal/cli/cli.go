@@ -130,6 +130,10 @@ func env(k, def string) string {
 }
 func NewCommand() *cobra.Command {
 	c := &Client{HTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Out: os.Stdout, Err: os.Stderr}
+	return newCommand(c)
+}
+
+func newCommand(c *Client) *cobra.Command {
 	var apiURL string
 	root := &cobra.Command{Use: "devctl", Short: "Book a cluster and access it through the devctl gateway", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVar(&apiURL, "api", env("DEVCTL_API", "https://127.0.0.1:9090"), "Backend URL")
@@ -393,6 +397,7 @@ func NewCommand() *cobra.Command {
 	}})
 	c.addGatewayCommands(root)
 	c.addAdmin(root)
+	c.addPATCommands(root)
 	return root
 }
 func sessionPath(id string) string { return "/v1/sessions/" + url.PathEscape(id) }

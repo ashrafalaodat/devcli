@@ -1,5 +1,40 @@
 # Gateway verification record
 
+## 2026-11-11: three clients, browser SSO and session-scoped PATs
+
+Implemented and tested:
+
+- Full CLI remains available, including new private PAT file creation/list/revoke commands. The smaller `kubectl-devctl` executable exposes login/setup/status/logout, with hidden credential/heartbeat support. Actual kubectl plugin discovery and first-use real Keycloak PKCE login created one stable booking; forced access expiry silently rotated access and refresh tokens. The plugin does not depend on an installed `devctl` binary.
+- Browser SSO uses a separate public web client with PKCE S256, one-time browser-bound state, verified nonce and independently verified API access token. Secure/HttpOnly/SameSite cookies contain only a random identifier. OAuth credentials are encrypted in PostgreSQL; only cookie digests are persisted. Signed local OIDC tests with real PostgreSQL covered invalid state/cookie/replay/nonce/audience/subject/groups, encrypted persistence, CSRF/Origin, restart, logout, absolute expiry and pruning. Twenty concurrent requests across two handler/store instances used one rotating refresh grant.
+- Session-scoped opaque PATs are stored only as SHA-256 digests and delivered once in a gateway-only kubeconfig. Actual stock kubectl ran with no helper available on PATH. PATs cannot authenticate the control/admin APIs or automatic routes and cannot access another session. Real PostgreSQL gateway tests closed native watch and bidirectional streams after revocation, credential expiry, booking stop/logout or database outage. Credentials remain valid only for their original booking.
+- The real-Keycloak browser integration test passed in 1.87 seconds (2.893 seconds with race harness). It covered browser-only login, administrator cluster import into an isolated schema, exclusive conflict and holder-approved sharing, foreign-owner credential denial, native kubectl with downloaded PAT, backend restart, eight concurrent real token refreshes with rotation, maintenance, audit, administrative PAT revocation and booking release, and logout. It used a disposable local Keycloak instance, disposable PostgreSQL schemas, and a TLS Kubernetes API fixture. No registered remote cluster was contacted.
+- The responsive browser UI renders developer booking/share/renew/stop, team contacts, downloads/revocation and role-protected admin registration/maintenance/release/audit controls. Headless Chrome tests with fixture responses covered text escaping, CSRF submission, one-time download, role visibility, logout and mobile layout. A separate real browser smoke used actual local Keycloak and the running demo over verified HTTPS: Alice/admin login, four existing registry entries, developer/admin navigation, access controls, populated audit view and 390px mobile layout passed without JavaScript/certificate errors or browser token storage. No bookings, PAT issuance, admin changes, logout or Kubernetes requests were made against the normal registry during that smoke.
+- The existing persistent local realm received only the new `devctl-web` client through an authenticated admin-console browser flow. Existing user subjects and registry data were retained. `make demo-up` rebuilt the service and Keycloak image and preserved both identity-provider/database volumes. Browser callback is the exact approved `https://127.0.0.1:9090/auth/callback`.
+- Client and plugin installers were tested in private temporary paths containing spaces/apostrophes, with idempotent temporary shell RC updates and no modification of actual user startup files or global kubeconfig. Offline setup issued no token. CLI PAT tests verified private0600 files, path-only stdout, preservation of existing files/symlinks, safe returned IDs and truthful revocation-failure errors without sensitive response bodies.
+
+Commands actually executed:
+
+| Command | Result |
+| --- | --- |
+| `make build` | Pass; CLI, backend and kubectl plugin built |
+| `make test` | Pass with race detection; real-service suites skip without their environment variables |
+| `make test-db` | Pass; real PostgreSQL store4.299s, API7.330s, browser2.517s |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/browser -count=1 -v` | Pass, 2.003s; signed OIDC and PostgreSQL |
+| `DEVCTL_TEST_ISSUER=http://127.0.0.1:8081/realms/devctl DEVCTL_TEST_DATABASE_URL=… go test -race ./tests/integration -count=1 -v` | Pass, 28.025s; automatic workflow18.50s, existing gateway/manual7.35s, actual plugin1.14s; browser case explicitly skipped here and run separately |
+| `make browser-test` | Pass, latest2.806s (test1.79s), against disposable Keycloak18081/backend19090; test resources removed afterward |
+| `make demo-up` | Pass; verified HTTPS9090 ready, registry and identity volumes preserved |
+| `go test -race ./internal/cli -count=1` | Pass after PAT file-error fixes, 2.720s |
+| `go test -race ./internal/webui -count=1` | Pass |
+| `go vet ./...`, shell syntax, `git diff --check` | Pass |
+| OpenAPI JSON/path parameter validation and migrations003/004 comparison | Pass; 27 documented paths, embedded SQL matches migrations |
+| `make client-package plugin-package` and isolated plugin installer invocation | Pass; native Linux archive contains executable and installer only |
+
+Build/test temporary files used `/local/workspace/devctl-tmp`. The first disposable Keycloak startup failed because the host root disk was full. Two old inactive Go compiler temporary directories were moved intact to `/local/workspace/devctl-preserved-go-tmp`, freeing space; no repository, cluster or identity data was removed. An initial browser navigation waiting for network idle timed out; DOM readiness and explicit UI visibility checks passed. A temporary trust entry for only the generated demo CA was removed after real browser tests, preserving existing trust entries. No insecure TLS option was used.
+
+Implemented but not deployment-tested: corporate OIDC; desktop OS keyrings and non-Linux installers/process behavior; browser/PAT/plugin traffic against real Kubernetes workloads; production reverse proxies/load, multi-host refresh crash recovery and week-long sessions. The backend application container image was not rebuilt in this iteration; source container build files include all three binaries, and host binaries plus the Keycloak demo image were built. Browser functionality and PAT permissions were tested against disposable TLS API fixtures, which do not establish real-cluster security or workload behavior.
+
+Explicit limits: PATs do not refresh or extend themselves; default8h/max168h and reservation expiry bound access. Provider role removal does not automatically revoke a PAT: administrators must revoke it or release its booking. Download permissions depend on the browser; users must keep PAT YAML private. Smaller plugin commands do not restrict the underlying identity's server permissions. Kubernetes permission changes, cleanup, queuing, capacity accounting and corporate SSO remain deferred as described in the current README.
+
 ## 2026-11-10: automatic kubectl workflow
 
 The previous working version was committed and pushed as `a6a016e` before this implementation started. The new automatic workflow adds offline setup, an interactive credential helper, immutable automatic bindings, activity observation, and a detached authenticated renewal worker. Existing explicit-session behavior remains available.

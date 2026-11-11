@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "devctl reservation and Kubernetes gateway API",
-    "version": "0.2.0",
-    "description": "Whole-cluster exclusive bookings by default, holder-approved sharing, and an authenticated Kubernetes API gateway. Original static kubeconfigs stay encrypted on the server. Developer configs contain public gateway metadata and a devctl exec credential command. Reservation endpoints do not automatically provision or clean Kubernetes resources."
+    "version": "0.3.0",
+    "description": "Whole-cluster reservations and an authenticated Kubernetes gateway, with a full CLI, a smaller kubectl plugin, and a browser UI. CLI/plugin kubeconfigs use exec credentials with OIDC refresh. Browser downloads contain a per-booking revocable PAT requiring only stock kubectl. Original cluster credentials stay encrypted server-side. No Kubernetes resources or permissions are changed by reservation operations."
   },
   "servers": [
     {
@@ -14,6 +14,9 @@
   "security": [
     {
       "bearerAuth": []
+    },
+    {
+      "browserSession": []
     }
   ],
   "paths": {
@@ -510,6 +513,15 @@
               "maxLength": 128
             },
             "description": "Scoped to issuer/subject identity; same key and body replay the original reservation."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "requestBody": {
@@ -709,6 +721,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "requestBody": {
@@ -815,6 +836,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ]
       }
@@ -903,6 +933,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "requestBody": {
@@ -1040,7 +1079,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ]
       }
     },
     "/v1/admin/clusters": {
@@ -1128,7 +1178,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ]
       }
     },
     "/v1/admin/clusters/{id}": {
@@ -1215,6 +1276,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "requestBody": {
@@ -1325,6 +1395,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "requestBody": {
@@ -1439,7 +1518,7 @@
     "/k8s/sessions/{id}/{path}": {
       "get": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -1550,11 +1629,19 @@
             "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
           }
         },
-        "x-devctl-catch-all": true
+        "x-devctl-catch-all": true,
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "post": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -1702,11 +1789,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "put": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -1854,11 +1949,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "patch": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -2006,11 +2109,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "delete": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -2158,11 +2269,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "options": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -2273,11 +2392,19 @@
             "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
           }
         },
-        "x-devctl-catch-all": true
+        "x-devctl-catch-all": true,
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       },
       "head": {
         "summary": "Forward an authenticated Kubernetes API request for an owned active session",
-        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled.",
+        "description": "This is a catch-all Kubernetes API proxy, not a remote shell endpoint. The gateway validates signature, issuer, API audience, expiry, access-token marker, group membership, session ownership, ACTIVE state and lease. The registry supplies the destination and server-held credentials; client identity/impersonation credentials are not forwarded as Kubernetes identity. Query strings, HTTP response streaming and bidirectional upgrades are supported. Long requests are rechecked at DEVCTL_GATEWAY_RECHECK_INTERVAL (default 1s); stalled rechecks fail closed within their 5s check timeout. Upstream permissions and workload effects are unchanged. The precise Kubernetes resource schema depends on the target API. The upstream connection intentionally uses HTTP/1.1 for SPDY/WebSocket upgrade compatibility; HTTPS verification remains enabled. Exact-session opaque PATs are also accepted; PAT revocation/expiry is rechecked during streams. Browser cookies are never Kubernetes gateway credentials.",
         "parameters": [
           {
             "name": "id",
@@ -2388,7 +2515,15 @@
             "description": "Other upstream Kubernetes statuses and response content are passed through, including resource-specific errors. Do not assume all upstream responses are JSON."
           }
         },
-        "x-devctl-catch-all": true
+        "x-devctl-catch-all": true,
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "personalToken": []
+          }
+        ]
       }
     },
     "/v1/auto/{binding}/ensure": {
@@ -2405,6 +2540,15 @@
               "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
             },
             "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "responses": {
@@ -2575,6 +2719,15 @@
               "pattern": "^a-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
             },
             "description": "Client-generated automatic binding ID, scoped to the authenticated issuer plus subject."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
         "responses": {
@@ -3602,6 +3755,346 @@
         },
         "x-devctl-catch-all": true
       }
+    },
+    "/v1/pats": {
+      "get": {
+        "summary": "List own personal gateway credential metadata",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PersonalAccessToken"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Administrators may list all owners; default own credentials."
+          }
+        ]
+      },
+      "post": {
+        "summary": "Issue a one-time gateway kubeconfig for one owned active booking",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PATCreation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PATRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/pats/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "summary": "Revoke own PAT or, as administrator with reason, another owner\u2019s PAT",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/audit": {
+      "get": {
+        "summary": "Administrator audit history, newest first",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEvent"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/web/session": {
+      "get": {
+        "summary": "Current browser identity and anti-CSRF token (no OAuth tokens)",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "security": [
+          {
+            "browserSession": []
+          }
+        ]
+      }
+    },
+    "/auth/login": {
+      "get": {
+        "summary": "Start browser Authorization Code flow with PKCE S256 and one-time state/nonce",
+        "security": [],
+        "responses": {
+          "302": {
+            "description": "Redirect to configured trusted provider; sets browser-bound login cookie"
+          },
+          "503": {
+            "description": "Login state unavailable"
+          }
+        }
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "summary": "Consume browser-bound state, validate code/nonce and API token, create secure browser session",
+        "security": [],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to UI; sets Secure HttpOnly browser session cookie"
+          },
+          "400": {
+            "description": "Invalid, replayed or expired state"
+          },
+          "401": {
+            "description": "OIDC exchange or identity validation failed"
+          },
+          "403": {
+            "description": "Unapproved application user"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "summary": "Clear browser session, attempt refresh-token revocation, release own bookings and revoke own PATs",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Owner/admin/CSRF permission required"
+          },
+          "409": {
+            "description": "Reservation conflict"
+          },
+          "503": {
+            "description": "State or provider unavailable"
+          }
+        },
+        "security": [
+          {
+            "browserSession": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -3611,6 +4104,18 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "Trusted issuer, API audience, valid signature and expiry, explicit access-token marker and approved group required. ID tokens rejected."
+      },
+      "browserSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-devctl-web",
+        "description": "Opaque Secure HttpOnly SameSite=Lax browser cookie. OAuth tokens encrypted server-side. Cookie-authenticated POST/PATCH/DELETE also require matching Origin and X-CSRF-Token from /web/session."
+      },
+      "personalToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "PAT",
+        "description": "Opaque dcpat_ credential accepted ONLY for its exact /k8s/sessions/{id} route. No control/admin API rights. Default8h/max168h, capped by booking expiry, explicitly revocable, no refresh."
       }
     },
     "schemas": {
@@ -3864,6 +4369,139 @@
           "certificate_authority_data": {
             "type": "string",
             "description": "Optional base64 public PEM gateway CA; never upstream credentials."
+          }
+        }
+      },
+      "PersonalAccessToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "session_id",
+          "name",
+          "scope",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PATRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "session_id",
+          "name"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "ttl": {
+            "type": "string",
+            "default": "8h",
+            "description": "1m..168h, capped by reservation expiry. No sliding renewal."
+          }
+        }
+      },
+      "PATCreation": {
+        "type": "object",
+        "required": [
+          "pat",
+          "kubeconfig"
+        ],
+        "properties": {
+          "pat": {
+            "$ref": "#/components/schemas/PersonalAccessToken"
+          },
+          "kubeconfig": {
+            "type": "string",
+            "description": "Sensitive one-time gateway-only YAML with opaque PAT. Never returned again. Store privately; no exec, ID/access/refresh tokens or upstream credentials."
+          }
+        }
+      },
+      "BrowserSession": {
+        "type": "object",
+        "required": [
+          "user",
+          "owner_id",
+          "csrf_token",
+          "expires_at"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "csrf_token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
           }
         }
       }

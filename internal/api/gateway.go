@@ -126,7 +126,20 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setup, cancelSetup := context.WithTimeout(r.Context(), 20*time.Second)
-	u, e := s.Auth.Verify(setup, rawToken)
+	var u model.Identity
+	personal := strings.HasPrefix(rawToken, "dcpat_")
+	if personal {
+		// PATs authenticate only their exact session route. They cannot allocate
+		// a booking, authenticate a control API or use an automatic binding.
+		if binding != "" {
+			cancelSetup()
+			fail(w, http.StatusUnauthorized, "personal credentials require their recorded session gateway")
+			return
+		}
+		u, e = s.Store.VerifyPAT(setup, rawToken, id)
+	} else {
+		u, e = s.Auth.Verify(setup, rawToken)
+	}
 	if e != nil {
 		cancelSetup()
 		fail(w, 401, "invalid devctl access token or user not approved")
@@ -192,7 +205,9 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	cancelSetup()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	if binding == "" {
+	if personal {
+		go s.monitorPAT(ctx, cancel, u, rawToken, id)
+	} else if binding == "" {
 		go s.monitor(ctx, cancel, u, rawToken, id)
 	} else {
 		go s.monitorAutomatic(ctx, cancel, u, binding, id)
@@ -305,6 +320,37 @@ func (s *Server) monitorAutomatic(ctx context.Context, cancel context.CancelFunc
 		case <-timer.C:
 			check, done := context.WithTimeout(ctx, 5*time.Second)
 			err := s.Store.CheckAutomaticAccess(check, u, binding, id)
+			if err == nil {
+				err = s.Store.TouchActivity(check, u, id)
+			}
+			done()
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// Personal credentials are rechecked against durable revocation and session
+// state throughout ordinary streams and duplex exec/port-forward connections.
+func (s *Server) monitorPAT(ctx context.Context, cancel context.CancelFunc, u model.Identity, token, id string) {
+	interval := s.GatewayRecheckInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			check, done := context.WithTimeout(ctx, 5*time.Second)
+			current, err := s.Store.VerifyPAT(check, token, id)
+			if err == nil && current.Key() != u.Key() {
+				err = errors.New("identity changed")
+			}
 			if err == nil {
 				err = s.Store.TouchActivity(check, u, id)
 			}
