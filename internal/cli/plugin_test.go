@@ -53,6 +53,9 @@ func TestPluginHasOnlyConnectionControls(t *testing.T) {
 	if cmd, _, err := full.Find([]string{"admin", "register"}); err != nil || cmd.Name() != "register" {
 		t.Fatal("full CLI modified by plugin filter")
 	}
+	if cmd, _, err := full.Find([]string{"admin", "deregister"}); err != nil || cmd.Name() != "deregister" {
+		t.Fatal("full CLI deregistration removed by plugin filter")
+	}
 }
 
 func TestPluginLoginRefreshesWithoutBookingAndPrintsOnlyStableConfigPath(t *testing.T) {

@@ -33,6 +33,7 @@ type Cluster struct {
 	Participants      []Session         `json:"participants"`
 	Available         bool              `json:"available"`
 	Reason            string            `json:"reason"`
+	DeregisteredAt    *time.Time        `json:"deregistered_at,omitempty"`
 }
 type Session struct {
 	ID             string     `json:"id"`

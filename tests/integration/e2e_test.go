@@ -275,6 +275,8 @@ func TestEndToEnd(t *testing.T) {
 	if a.ID != retry.ID {
 		t.Fatal("idempotency failed")
 	}
+	env.reject(alice, 3, "admin", "deregister", "alpha", "--reason", "developer cannot retire a registry entry")
+	env.reject(admin, 4, "admin", "deregister", "alpha", "--reason", "active private booking blocks retirement")
 	env.reject(bob, 4, "start", "--cluster", "alpha")
 	b := session(t, env.run(bob, "start", "--selector", "region=local"))
 	if b.Cluster != "beta" {
@@ -285,6 +287,7 @@ func TestEndToEnd(t *testing.T) {
 	env.run(bob, "stop", b.ID)
 	env.run(alice, "share", a.ID)
 	b = session(t, env.run(bob, "start", "--cluster", "alpha"))
+	env.reject(admin, 4, "admin", "deregister", "alpha", "--reason", "active shared bookings block retirement")
 	env.reject(bob, 4, "share", b.ID, "--off")
 	raw := env.run(bob, "status", b.ID, "--json")
 	var detail struct {
@@ -434,6 +437,33 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal("background expiry did not run")
 	}
 	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/version", expiryToken)
+	// Registry removal is an application operation. Preserve historical bookings,
+	// delete the encrypted credentials, and never call the Kubernetes endpoint.
+	upstream.mu.Lock()
+	requestsBeforeDeregistration := len(upstream.Requests)
+	upstream.mu.Unlock()
+	env.run(admin, "admin", "deregister", "alpha", "--reason", "CLI integration retirement")
+	env.run(admin, "admin", "deregister", "alpha", "--reason", "idempotent retry")
+	env.reject(admin, 5, "admin", "deregister", "unknown", "--reason", "unknown registry ID")
+	env.reject(alice, 4, "start", "--cluster", "alpha")
+	var remaining []model.Cluster
+	if json.Unmarshal(env.run(admin, "clusters", "--json"), &remaining) != nil || len(remaining) != 1 || remaining[0].ID != "beta" {
+		t.Fatal("CLI deregistration removed the wrong registry entry")
+	}
+	if json.Unmarshal(env.run(alice, "status", a.ID, "--json"), &detail) != nil || detail.Cluster.ID != "alpha" || detail.Cluster.DeregisteredAt == nil {
+		t.Fatal("CLI could not inspect the deregistered cluster's booking history")
+	}
+	var credentialsRemoved bool
+	if err = database.Pool.QueryRow(t.Context(), "SELECT kubeconfig_ciphertext IS NULL FROM clusters WHERE id='alpha'").Scan(&credentialsRemoved); err != nil || !credentialsRemoved {
+		t.Fatal("CLI deregistration retained upstream credentials", err)
+	}
+	upstream.mu.Lock()
+	requestsAfterDeregistration := len(upstream.Requests)
+	upstream.mu.Unlock()
+	if requestsAfterDeregistration != requestsBeforeDeregistration {
+		t.Fatal("registry deregistration contacted Kubernetes")
+	}
+	t.Log("CLI administrator deregistration denies active holders, removes credentials/placement, preserves history and never contacts Kubernetes")
 	env.run(alice, "logout")
 	env.run(bob, "logout")
 	env.run(admin, "logout")

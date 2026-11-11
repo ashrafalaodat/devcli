@@ -464,6 +464,7 @@ func (c *Client) addAdmin(root *cobra.Command) {
 	}}
 	force.Flags().StringVar(&forceReason, "reason", "", "Audit reason")
 	admin.AddCommand(force)
+	c.addDeregisterCommand(admin)
 	c.addPolicyCommands(admin)
 	root.AddCommand(admin)
 }

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "devctl reservation and Kubernetes gateway API",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "description": "Whole-cluster reservations with an administrator-controlled developer booking limit (default one), an identity-wide primary selection, and one stable /k8s gateway. CLI and kubectl plugin use OIDC exec credentials with refresh; browser downloads contain a revocable developer-scoped PAT. Login, setup, refresh and Kubernetes requests never allocate a cluster. With no active primary, gateway requests return403 text/plain with \u201cno cluster is booked\u201d, so native kubectl discovery and raw requests preserve the actionable message. Control API /v1/access retains409 for the same reservation conflict. Original cluster credentials stay encrypted server-side. Existing bookings survive upgrade, but legacy session-scoped PATs are revoked; old /k8s/sessions/... and /k8s/auto/... connection paths return410 and require one fresh setup/download. Reservations now use an administrator-controlled inactivity grace period (default 4h), rather than a booking duration or manual renewal. Only the used primary is extended. Actual Kubernetes requests, valid open streams, explicit selection and authenticated foreground interaction signals count; passive reads and OAuth refresh do not. Idle release preserves workloads and PATs."
   },
   "servers": [
@@ -259,7 +259,7 @@
     "/v1/clusters": {
       "get": {
         "summary": "Registry and booking availability with visible co-users",
-        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients. Deregistered clusters are omitted.",
         "responses": {
           "200": {
             "description": "Success",
@@ -539,7 +539,7 @@
     "/v1/sessions/{id}": {
       "get": {
         "summary": "Session and current cluster participants",
-        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients. Historical bookings remain readable after deregistration and include public archived cluster metadata with deregistered_at; no credentials are returned.",
         "responses": {
           "200": {
             "description": "Success",
@@ -1248,6 +1248,123 @@
                   "maintenance",
                   "reason"
                 ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Deregister an unused cluster and remove its stored kubeconfig",
+        "description": "Administrator only; an audit reason is required. Rejects409 while any active booking holds the cluster, including shared bookings. First stop/release bookings or let legitimate inactivity expiry finish; there is no force-deregister option. Transactionally removes encrypted upstream credentials and placement visibility while retaining public archived metadata, booking history, creation idempotency records and audit events. Never contacts Kubernetes, deletes workloads or revokes upstream credentials or PATs. Retired cluster IDs cannot be reused; display names can be reused by a new ID. Repeating deregistration of an archived ID succeeds without duplicate audit; unknown IDs return404.",
+        "responses": {
+          "200": {
+            "description": "Deregistered, or already deregistered; credentials absent and history retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown cluster ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cluster has active bookings; release all bookings before deregistering",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason, at most1000 UTF-8 bytes."
+                  }
+                }
               }
             }
           }
@@ -5063,6 +5180,12 @@
             "items": {
               "$ref": "#/components/schemas/Session"
             }
+          },
+          "deregistered_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Present on archived metadata returned for historical session details. Deregistered clusters never appear in current registry/availability lists, have no stored kubeconfig and cannot be selected or booked."
           }
         },
         "required": [
@@ -5114,10 +5237,12 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$"
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$",
+            "description": "Stable ID, unique across current and deregistered records. Use a new ID when registering again after deregistration."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name, unique among currently registered clusters; retired names can be reused."
           },
           "labels": {
             "type": "object",

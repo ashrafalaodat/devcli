@@ -137,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PATCH /v1/admin/developers/{owner}", s.updateDeveloper)
 	m.HandleFunc("POST /v1/admin/clusters", s.register)
 	m.HandleFunc("PATCH /v1/admin/clusters/{id}", s.maintain)
+	m.HandleFunc("DELETE /v1/admin/clusters/{id}", s.deregister)
 	m.HandleFunc("POST /v1/admin/sessions/{id}/release", s.force)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/k8s/sessions/") || strings.HasPrefix(r.URL.Path, "/k8s/auto/") {
@@ -195,6 +196,11 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+			// Deregistration removes credentials and active registry visibility,
+			// while the archived metadata keeps historical bookings readable.
+			c, err := s.Store.Cluster(r.Context(), v.Cluster)
+			respond(w, err, map[string]any{"session": v, "cluster": c})
+			return
 		}
 	}
 	fail(w, 404, "session not found")
@@ -283,6 +289,19 @@ func (s *Server) maintain(w http.ResponseWriter, r *http.Request) {
 	e := s.Store.Maintain(r.Context(), user(r), r.PathValue("id"), *b.Maintenance, b.Reason)
 	respond(w, e, map[string]string{"status": "updated"})
 }
+
+func (s *Server) deregister(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Reason string `json:"reason"`
+	}
+	if e := decode(w, r, &b); e != nil || !safeID.MatchString(r.PathValue("id")) || strings.TrimSpace(b.Reason) == "" || len(b.Reason) > 1000 {
+		fail(w, http.StatusBadRequest, "a valid cluster ID and an audit reason of 1 through 1000 bytes are required")
+		return
+	}
+	e := s.Store.Deregister(r.Context(), user(r), r.PathValue("id"), strings.TrimSpace(b.Reason))
+	respond(w, e, map[string]string{"status": "deregistered; stored kubeconfig removed; booking history and Kubernetes workloads retained"})
+}
+
 func (s *Server) force(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Reason string `json:"reason"`

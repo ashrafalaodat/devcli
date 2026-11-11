@@ -10,14 +10,14 @@ const assets = path.resolve(__dirname, '../assets');
 const alice = {issuer: 'https://issuer.test', subject: 'alice', name: 'alice', display_name: 'Alice <img src=x onerror=alert(1)>', email: 'alice@example.test', admin: false};
 const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'admin', display_name: 'Administrator', email: 'admin@example.test', admin: true};
 const state = {
-  primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, pats: [], mutations: [], signedOut: false,
+  primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, pats: [], mutations: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: '2026-01-01T00:00:00Z', expires_at: '2026-01-01T04:00:00Z', reason: 'fixture'})),
 };
 let origin;
 const sessionRows = () => state.sessions.map(s => ({...s, primary: s.id === state.primary}));
 const primary = () => sessionRows().find(s => s.id === state.primary && s.state === 'ACTIVE');
 const profile = admin => ({owner_id: admin ? 'admin' : 'alice', user: admin ? administrator : alice, max_bookings: admin ? state.defaultLimit : state.override ?? state.defaultLimit, max_bookings_override: admin ? null : state.override, active_bookings: admin ? 0 : state.sessions.filter(s => s.state === 'ACTIVE').length, primary_session: admin ? null : primary(), selection_version: state.version});
-const clusters = () => ['a', 'b', 'c'].map(id => ({id, name: `Cluster ${id.toUpperCase()}`, labels: {test: 'ui'}, maintenance: false, controller_session: state.sessions.find(s => s.cluster === id && s.state === 'ACTIVE')?.id, shareable: false, max_participants: 2, participants: sessionRows().filter(s => s.cluster === id && s.state === 'ACTIVE'), available: !state.sessions.some(s => s.cluster === id && s.state === 'ACTIVE'), reason: 'Fixture cluster'}));
+const clusters = () => ['a', 'b', 'c'].filter(id => !state.retired.has(id)).map(id => ({id, name: `Cluster ${id.toUpperCase()}`, labels: {test: 'ui'}, maintenance: false, controller_session: state.sessions.find(s => s.cluster === id && s.state === 'ACTIVE')?.id, shareable: false, max_participants: 2, participants: sessionRows().filter(s => s.cluster === id && s.state === 'ACTIVE'), available: !state.sessions.some(s => s.cluster === id && s.state === 'ACTIVE'), reason: 'Fixture cluster'}));
 function reply(res, status, body) { res.writeHead(status, {'Content-Type': 'application/json'}); res.end(JSON.stringify(body)); }
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, origin || 'http://127.0.0.1');
@@ -28,6 +28,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, {'Content-Type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html'}); res.end(fs.readFileSync(path.join(assets, name))); return;
     }
     if (req.method === 'GET') {
+      if (url.pathname === '/v1/clusters') state.registryReads++;
       if (url.pathname === '/web/session' && state.signedOut && !admin) { reply(res, 401, {error: 'signed out'}); return; }
       const routes = {
         '/web/session': {user: admin ? administrator : alice, owner_id: admin ? 'admin' : 'alice', csrf_token: admin ? 'csrf-admin' : 'csrf-alice', expires_at: '2099-01-01T00:00:00Z'},
@@ -75,6 +76,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/v1/admin/settings' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.defaultLimit = body.default_max_bookings; state.inactivityGrace = body.inactivity_grace_period; reply(res, 200, {status: 'updated'}); return; }
     if (url.pathname === '/v1/admin/developers/alice' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.override = body.max_bookings; reply(res, 200, {status: 'updated'}); return; }
+    if (/^\/v1\/admin\/clusters\/[^/]+$/.test(url.pathname) && req.method === 'DELETE') {
+      if (!admin) { reply(res, 403, {error: 'administrator required'}); return; }
+      assert.deepEqual(Object.keys(body), ['reason']); assert.ok(body.reason.trim()); assert.equal(body.reason, body.reason.trim());
+      const id = url.pathname.split('/').at(-1);
+      if (state.deregistrationConflict === id) { state.deregistrationConflict = null; reply(res, 409, {error: 'Release active bookings before deregistering this cluster.'}); return; }
+      if (clusters().find(c => c.id === id)?.participants.length) { reply(res, 409, {error: 'Release active bookings first.'}); return; }
+      state.retired.add(id); reply(res, 200, {status: 'deregistered'}); return;
+    }
     reply(res, 404, {error: 'fixture route not implemented'});
   } catch (error) { console.error('UI fixture assertion:', error.message); reply(res, 500, {error: 'UI fixture assertion failed'}); }
 });
@@ -88,6 +97,7 @@ const server = http.createServer(async (req, res) => {
     await page.goto(origin, {waitUntil: 'domcontentloaded'}); await page.locator('#workspace').waitFor({state: 'visible'});
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster A'}).waitFor();
     assert.equal(await page.locator('#admin-nav').isVisible(), false); assert.equal(await page.locator('#identity img').count(), 0);
+    assert.equal(await page.getByRole('button', {name: 'Deregister', exact: true}).count(), 0, 'developers must not see registry removal controls');
     assert.equal(await page.locator('#booking-submit').isDisabled(), true);
     assert.equal(await page.locator('#booking-form [name=ttl]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Renew lease', exact: true}).count(), 0);
@@ -136,7 +146,8 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(await page.evaluate(() => ({local: localStorage.length, session: sessionStorage.length})), {local: 0, session: 0});
     await page.setViewportSize({width: 390, height: 844}); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(errors, []);
-    const adminContext = await browser.newContext({extraHTTPHeaders: {'X-UI-Test-Role': 'admin'}}); const adminPage = await adminContext.newPage(); adminPage.on('dialog', dialog => dialog.accept());
+    const adminContext = await browser.newContext({extraHTTPHeaders: {'X-UI-Test-Role': 'admin'}}); const adminPage = await adminContext.newPage();
+    let acceptAdminDialog = true; const adminDialogs = []; adminPage.on('dialog', dialog => { adminDialogs.push(dialog.message()); return acceptAdminDialog ? dialog.accept() : dialog.dismiss(); });
     await adminPage.goto(origin, {waitUntil: 'domcontentloaded'}); await adminPage.locator('#workspace').waitFor({state: 'visible'});
     await adminPage.getByRole('button', {name: 'Administration', exact: false}).click(); await adminPage.locator('#developer-list table').waitFor();
     await adminPage.locator('#inactivity-grace-period').fill('2h'); await adminPage.locator('#default-booking-limit').fill('3'); await adminPage.locator('#settings-form input[name=reason]').fill('UI policy test'); await adminPage.locator('#settings-form button').click();
@@ -147,7 +158,35 @@ const server = http.createServer(async (req, res) => {
     await adminPage.getByRole('cell', {name: '1 / 4', exact: true}).waitFor();
     row = adminPage.locator('#developer-list tbody tr').first(); await row.locator('input[name=max_bookings]').fill(''); await row.locator('input[name=reason]').fill('UI inherit test'); await row.getByRole('button', {name: 'Save limit'}).click();
     await adminPage.getByRole('cell', {name: '1 / 3', exact: true}).waitFor(); assert.equal(state.mutations.at(-1).body.max_bookings, null);
-    assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 1); await adminContext.close();
+    assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 1);
+    const adminCard = id => adminPage.locator(`#maintenance-list .cluster-card[data-cluster-id="${id}"]`);
+    const deregistrations = () => state.mutations.filter(r => r.method === 'DELETE' && r.path.startsWith('/v1/admin/clusters/'));
+    assert.equal(await adminCard('c').getByRole('button', {name: 'Deregister', exact: true}).isDisabled(), true, 'an active booking must block deregistration');
+    assert.ok((await adminCard('c').innerText()).includes('Release all active bookings'));
+    await adminCard('a').getByRole('button', {name: 'Deregister', exact: true}).click();
+    await adminPage.waitForTimeout(10);
+    assert.equal(deregistrations().length, 0); assert.equal(adminDialogs.length, 0, 'missing reason must fail before confirmation');
+    await adminCard('a').locator('input[name=reason]').fill('  '); await adminCard('a').getByRole('button', {name: 'Deregister', exact: true}).click();
+    await adminPage.waitForTimeout(10); assert.equal(deregistrations().length, 0); assert.equal(adminDialogs.length, 0, 'whitespace reason must not request deletion');
+    acceptAdminDialog = false;
+    await adminCard('a').locator('input[name=reason]').fill('  Retired fixture  '); await adminCard('a').getByRole('button', {name: 'Deregister', exact: true}).click();
+    await adminPage.waitForTimeout(10); assert.equal(deregistrations().length, 0, 'cancelled confirmation must not delete');
+    assert.ok(adminDialogs.at(-1).includes('Cluster A (a)')); assert.ok(adminDialogs.at(-1).includes('stored Kubernetes credentials')); assert.ok(adminDialogs.at(-1).includes('workloads will remain'));
+    acceptAdminDialog = true;
+    const beforeDeregisterPATs = structuredClone(state.pats);
+    await adminCard('a').getByRole('button', {name: 'Deregister', exact: true}).click();
+    await adminCard('a').waitFor({state: 'detached'});
+    assert.equal(await adminPage.locator('#cluster-list .cluster-card[data-cluster-id="a"]').count(), 0, 'deregistered cluster must leave developer cluster list too');
+    assert.equal(await adminPage.locator('#booking-cluster option[value=a]').count(), 0);
+    assert.deepEqual(deregistrations().at(-1).body, {reason: 'Retired fixture'});
+    assert.equal(state.sessions.find(s => s.id === 's-a').state, 'RELEASED', 'booking history must remain'); assert.deepEqual(state.pats, beforeDeregisterPATs);
+    state.deregistrationConflict = 'b'; const readsBeforeConflict = state.registryReads;
+    await adminCard('b').locator('input[name=reason]').fill('Concurrent reservation fixture'); await adminCard('b').getByRole('button', {name: 'Deregister', exact: true}).click();
+    await adminPage.locator('#notification.error').filter({hasText: 'Release active bookings'}).waitFor();
+    assert.equal(await adminCard('b').count(), 1); assert.equal(state.retired.has('b'), false); assert.ok(state.registryReads > readsBeforeConflict, 'conflict should refresh authoritative registry state');
+    assert.equal(state.mutations.some(r => r.method === 'PATCH' && r.path.startsWith('/v1/admin/clusters/')), false, 'deregister button must not submit maintenance form');
+    await adminPage.setViewportSize({width: 390, height: 844}); assert.ok(await adminPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await adminContext.close();
     const beforeLogoutPATs = structuredClone(state.pats), beforeLogoutDeletes = state.mutations.filter(r => r.method === 'DELETE').length;
     await page.getByRole('button', {name: 'Sign out', exact: true}).click();
     await page.locator('#welcome').waitFor({state: 'visible'});
@@ -160,6 +199,6 @@ const server = http.createServer(async (req, res) => {
     const afterLogoutActivity = activity().length; await page.clock.runFor(90000); assert.equal(activity().length, afterLogoutActivity, 'logout clears pending presence');
     assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 0);
     assert.deepEqual(errors, []); await context.close();
-    console.log('Primary UI contracts passed: per-cluster interaction heartbeat, idle/hidden/polling guards, throttling, inactivity policy, retired booking duration/renewal, limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
+    console.log('Primary UI contracts passed: audited admin deregistration, active-booking/confirmation/conflict guards, registry refresh, per-cluster interaction heartbeat, idle/hidden/polling guards, throttling, inactivity policy, retired booking duration/renewal, limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => {console.error(error.stack); server.close(); process.exitCode = 1;});

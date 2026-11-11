@@ -150,15 +150,30 @@
   function labelsNode(labels) { const node = element('div', null, 'labels'); for (const [key, value] of Object.entries(labels || {})) node.append(element('span', `${key}=${value}`, 'label')); return node; }
   function clusterCard(c, admin = false) {
     const card = element('article', null, 'cluster-card'), top = element('div', null, 'card-top'), title = element('div'); title.append(element('h3', c.name), element('small', c.id, 'mono')); top.append(title, pill(c.maintenance ? 'Maintenance' : c.available ? 'Available' : 'Reserved', c.maintenance ? 'warning' : c.available ? 'success' : 'neutral')); card.append(top, labelsNode(c.labels), element('p', c.reason));
+    card.dataset.clusterId = c.id;
     const people = element('div', null, 'participants');
     if (!(c.participants || []).length) people.append(element('span', 'No active holders.'));
     for (const person of c.participants || []) { const row = element('div', null, 'participant'); row.append(contact(person)); people.append(row); } card.append(people);
     if (!admin) {
       if (c.available && state.profile.active_bookings < state.profile.max_bookings && !(c.participants || []).some(s => s.owner === owner())) card.append(button((c.participants || []).length ? 'Join shared cluster' : 'Book cluster', 'secondary', () => { showSection('overview'); $('booking-cluster').value = c.id; $('booking-form').scrollIntoView({behavior: 'smooth', block: 'center'}); }));
     } else {
-      const form = element('form', null, 'maintenance-form'), label = element('label', 'Audit reason'), input = element('input'); input.name = 'reason'; input.required = true; input.maxLength = 500; input.placeholder = c.maintenance ? 'Ready for bookings' : 'Planned maintenance'; label.append(input);
-      const submit = element('button', c.maintenance ? 'Enable placement' : 'Set maintenance', `button ${c.maintenance ? 'secondary' : 'danger'} small`); submit.type = 'submit'; form.append(label, submit);
+      const form = element('form', null, 'maintenance-form'), label = element('label', 'Audit reason'), input = element('input'); input.name = 'reason'; input.required = true; input.maxLength = 1000; input.placeholder = c.maintenance ? 'Ready for bookings' : 'Planned maintenance'; label.append(input);
+      const submit = element('button', c.maintenance ? 'Enable placement' : 'Set maintenance', `button ${c.maintenance ? 'secondary' : 'danger'} small`); submit.type = 'submit';
+      const deregister = button('Deregister', 'danger small', async () => {
+        const reason = input.value.trim();
+        input.setCustomValidity(reason ? '' : 'An audit reason is required.');
+        if (!form.reportValidity()) return;
+        if (!window.confirm(`Deregister ${c.name} (${c.id})? Its stored Kubernetes credentials will be removed from devctl. Booking history and Kubernetes workloads will remain.`)) return;
+        try { await api(`/v1/admin/clusters/${encodeURIComponent(c.id)}`, {method: 'DELETE', body: {reason}}); }
+        catch (error) { await refresh(); throw error; }
+        await refresh(); notify('Cluster deregistered. Stored Kubernetes credentials were removed; booking history and workloads were retained.');
+      });
+      input.addEventListener('input', () => input.setCustomValidity(''));
+      const blocked = (c.participants || []).some(s => s.state === 'ACTIVE'); deregister.disabled = blocked;
+      if (blocked) deregister.title = 'Release all active bookings before deregistering this cluster.';
+      const actions = element('div', null, 'card-actions'); actions.append(submit, deregister); form.append(label, actions);
       form.addEventListener('submit', event => { event.preventDefault(); run(submit, async () => { await api(`/v1/admin/clusters/${encodeURIComponent(c.id)}`, {method: 'PATCH', body: {maintenance: !c.maintenance, reason: input.value.trim()}}); await refresh(); notify('Cluster placement controls updated. Existing bookings remain.'); }); }); card.append(form);
+      if (blocked) card.append(element('p', 'Release all active bookings before deregistering this cluster.', 'field-help'));
     }
     return card;
   }

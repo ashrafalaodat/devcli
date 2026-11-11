@@ -276,7 +276,7 @@ func (s *Store) SelectPrimary(ctx context.Context, u model.Identity, target stri
 		}
 		var id string
 		err := t.QueryRow(ctx, `SELECT s.id FROM sessions s JOIN clusters c ON c.id=s.cluster_id
- WHERE s.owner_id=$1 AND s.state='ACTIVE' AND (s.expires_at IS NULL OR s.expires_at>clock_timestamp())
+ WHERE s.owner_id=$1 AND s.state='ACTIVE' AND c.deregistered_at IS NULL AND (s.expires_at IS NULL OR s.expires_at>clock_timestamp())
 		 AND (s.id=$2 OR c.id=$2 OR c.name=$2)
  ORDER BY CASE WHEN s.id=$2 THEN 0 WHEN c.id=$2 THEN 1 ELSE 2 END,s.created_at,s.id LIMIT 1`, u.Key(), target).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -359,7 +359,7 @@ func (s *Store) PrimaryConfig(ctx context.Context, u model.Identity) (model.Sess
 		if resultErr != nil {
 			return resultErr
 		}
-		if err := t.QueryRow(ctx, "SELECT kubeconfig_ciphertext FROM clusters WHERE id=$1", session.Cluster).Scan(&encrypted); err != nil {
+		if err := t.QueryRow(ctx, "SELECT kubeconfig_ciphertext FROM clusters WHERE id=$1 AND deregistered_at IS NULL", session.Cluster).Scan(&encrypted); err != nil {
 			return err
 		}
 		return t.audit(ctx, u.Key(), "gateway", session.ID, "loaded current primary upstream credentials for server-side forwarding")

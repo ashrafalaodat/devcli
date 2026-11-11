@@ -22,6 +22,12 @@ Requests are pinned to the reservation and selection version observed at start. 
 
 The default authorization recheck interval is 1s; `DEVCTL_GATEWAY_RECHECK_INTERVAL` accepts 100ms through 30s. Individual checks time out after 5s. Failed credential validation, revoked/expired PATs, release/expiry, primary changes and unavailable reservation state close streams. There is no claim of immediate interruption of a Kubernetes operation already accepted upstream. Kubernetes client discovery caches may retain previous-cluster information until refreshed even though routing follows the new primary.
 
+## Cluster deregistration
+
+Administrators can deregister a cluster through the CLI or browser with a nonblank audit reason. The same PostgreSQL reservation lock serializes deregistration with booking and expiry: live reservations reject removal instead of being silently evicted. There is no force-deregister operation; an administrator must explicitly release each booking through the existing audited release control first.
+
+Deregistration sets the encrypted kubeconfig column to NULL and removes the cluster from placement, listing, maintenance and credential lookup. The archived public metadata row remains for foreign-key history, idempotent booking retries and audit identity. IDs remain reserved; display names may be reused. Historical session details remain readable. Repeated deregistration is idempotent and creates no additional deregistration audit event. This does not erase existing database backups/WAL or revoke credentials already used/copied outside the service. It makes no Kubernetes API call, removes no workloads/data and changes no PAT validity.
+
 ## Activity and reservation expiry
 
 Administrators set a global inactivity grace period, default four hours and bounded from one minute through seven days. Booking duration and manual renewal are retired. Each active booking has a server-derived `expires_at` inactivity deadline. New bookings start a full window immediately. Migration gives existing active bookings a full window once; restarts do not reset it. Policy changes recalculate current deadlines from the recorded activity or migration baseline, so shortening the policy can expire an already-idle booking.

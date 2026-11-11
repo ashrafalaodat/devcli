@@ -1,5 +1,35 @@
 # Gateway verification record
 
+## 2026-11-11: administrator cluster deregistration
+
+Implemented and tested:
+
+- Added `devctl admin deregister CLUSTER_ID --reason 'Retiring environment'` and **Administration → Cluster placement controls → Deregister**. Browser removal requires a nonblank audit reason and explicit confirmation naming the cluster. Occupied cards disable the action with release guidance; a concurrent server conflict refreshes authoritative registry state. Developers and the reduced kubectl plugin have no admin command/control.
+- Added authenticated administrator `DELETE /v1/admin/clusters/{id}` with strict reason/body validation and the existing browser Origin/CSRF guard. Active private or shared bookings reject409; explicit owner/admin release must happen first. Unknown IDs return404. Retrying an already deregistered ID succeeds without another deregistration audit record. CLI preserves meaningful permission/conflict/not-found exit codes.
+- Migration007 retains archived public cluster metadata for historical sessions, booking idempotency and audits, but sets the encrypted kubeconfig to NULL and excludes the entry from availability, booking, selection, maintenance and credential lookup. Retired IDs stay reserved; a partial unique index permits display-name reuse with a new ID. Historical booking detail remains readable through the API and CLI. PAT validity and all other registrations remain unchanged.
+- Twelve concurrent booking-versus-deregistration rounds through two PostgreSQL Store instances proved that a cluster cannot be both retired and newly booked. Tests also covered existing-schema migration, restart stability, expiry before removal, database credential constraints, retained idempotency results, exact audit actor/reason and idempotent retries.
+- Actual Keycloak CLI/browser flows verified admin versus developer authorization, CSRF, occupied-booking conflicts, explicit stop then removal, preserved historical metadata, ciphertext removal and unavailable placement. Upstream request counters proved no Kubernetes call occurred during deregistration. Headless Chrome covered reason validation, cancellation, confirmation, occupied controls, server409 refresh, removal from both cluster lists/selectors, PAT/history preservation, no accidental maintenance request and mobile layout.
+- The existing local HTTPS9090 backend was rebuilt/restarted with schema7 and its served JavaScript checked. Read-only database metadata confirms all four normal registrations remain live with credentials present. No normal registry entry was deregistered and no registered remote Kubernetes endpoint was contacted. PostgreSQL/Keycloak containers were not recreated.
+
+Commands actually executed (Go/test temporary files used `/local/workspace/devctl-tmp`):
+
+| Command | Result |
+| --- | --- |
+| `make build` | Passed; backend, full CLI and kubectl plugin binaries built |
+| `make test` | Passed with race detection; external-service suites skip without their test configuration |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/store -count=1` | Passed7.494s using isolated schemas on local PostgreSQL54329 |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/api -count=1` | Passed9.408s; focused new `TestDeregister*` regressions also passed1.412s |
+| `go test -race ./internal/cli ./internal/webui` | Passed; CLI focused run2.600s, client/web UI regressions included |
+| `DEVCTL_TEST_DATABASE_URL=… DEVCTL_TEST_ISSUER=… go test -race ./tests/integration -run '^TestEndToEnd$' -count=1 -v` | Passed8.729s (test7.71s), with real local Keycloak and native CLI/kubectl against TLS protocol fixtures |
+| `./scripts/browser-test.sh` | Passed3.794s (test2.77s), disposable local Keycloak and isolated schema |
+| `node internal/webui/testdata/primary-ui.cjs` with installed Playwright | Passed; headless Chrome UI contract tests |
+| `go vet ./...`, JavaScript/shell syntax and `git diff --check` | Passed |
+| OpenAPI reference/path-parameter validation and migration007 comparison | Passed; DELETE documented; standalone SQL matches embedded migration |
+| `./scripts/package-client.sh` and `./scripts/package-plugin.sh` | Passed; current Linux client/plugin archives rebuilt |
+| Verified demo backend restart, `/readyz`, served JavaScript and read-only schema/registry counts | Passed; schema7 and4 live registrations with4 stored credentials |
+
+Implemented but not deployment-tested: production proxies/load, non-Linux runtimes/keyrings, corporate SSO and this policy against real Kubernetes workloads. Host binaries and client archives were rebuilt; the backend application container image was not rebuilt in this iteration. Deregistration intentionally performs no cluster cleanup or upstream credential revocation. Historical backups/WAL may retain old encrypted values under their existing retention policies; this is logical credential removal rather than a secure-erasure guarantee. [ADR007](adr-007.md) records the archival decision.
+
 ## 2026-11-11: activity-based reservation retention
 
 Implemented and tested:

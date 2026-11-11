@@ -109,7 +109,7 @@ kubectl get namespaces</pre><span class="pill success">Only kubectl required</sp
               <button class="button primary align-start" type="submit">Register cluster</button>
             </form>
           </section>
-          <div class="section-heading"><h2>Cluster placement controls</h2></div><div id="maintenance-list" class="cluster-grid"></div>
+          <div class="section-heading"><h2>Cluster placement controls</h2></div><p class="field-help">Deregister an unused cluster to remove its stored credentials from devctl. Release all active bookings first. Booking history and Kubernetes workloads remain.</p><div id="maintenance-list" class="cluster-grid"></div>
           <section class="panel" aria-labelledby="release-title"><h2 id="release-title">Release a booking</h2><p>End a booking. If it is primary, the oldest remaining booking becomes primary; otherwise kubectl reports no cluster is booked. Personal gateway tokens remain valid until their own expiry or revocation. Workloads remain.</p>
             <form id="release-form" class="form-grid">
               <label>Active booking<select id="release-session" name="session_id" required><option value="">Select a booking</option></select></label>

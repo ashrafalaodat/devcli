@@ -428,6 +428,59 @@ func TestBrowserAccess(t *testing.T) {
 		t.Fatal("explicitly revoked preserved PAT still works")
 	}
 	e.browserRequest(aliceAgain, "POST", "/v1/sessions/"+newBooking.ID+"/stop", nil, 200)
+	// Exercise deregistration with real browser SSO and CSRF, using a dedicated
+	// registry entry and no Kubernetes requests. Existing fixture clusters stay.
+	upstream.mu.Lock()
+	requestsBeforeDeregistration := len(upstream.Requests)
+	upstream.mu.Unlock()
+	e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": "web-retire", "name": "Browser retirement fixture", "kubeconfig": upstream.kubeconfig()}, 200)
+	retiring := session(t, e.browserRequest(aliceAgain, "POST", "/v1/sessions", model.Booking{Cluster: "web-retire"}, 201))
+	e.browserRequest(aliceAgain, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "developer cannot deregister"}, 403)
+	e.browserRequest(admin, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "active browser booking blocks retirement"}, 409)
+	withoutCSRF, err := http.NewRequest("DELETE", e.api+"/v1/admin/clusters/web-retire", strings.NewReader(`{"reason":"missing CSRF"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCSRF.Header.Set("Origin", e.api)
+	response, err := admin.client.Do(withoutCSRF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 403 {
+		t.Fatal("browser deregistration accepted a mutation without CSRF")
+	}
+	e.browserRequest(aliceAgain, "POST", "/v1/sessions/"+retiring.ID+"/stop", nil, 200)
+	e.browserRequest(admin, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "Browser integration retirement"}, 200)
+	e.browserRequest(admin, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "idempotent retry"}, 200)
+	e.browserRequest(admin, "DELETE", "/v1/admin/clusters/unknown", map[string]string{"reason": "unknown registry ID"}, 404)
+	var archived struct {
+		Session model.Session `json:"session"`
+		Cluster model.Cluster `json:"cluster"`
+	}
+	if json.Unmarshal(e.browserRequest(aliceAgain, "GET", "/v1/sessions/"+retiring.ID, nil, 200), &archived) != nil || archived.Session.State != "RELEASED" || archived.Cluster.ID != "web-retire" || archived.Cluster.DeregisteredAt == nil {
+		t.Fatal("browser history lost deregistered cluster metadata")
+	}
+	var remaining []model.Cluster
+	if json.Unmarshal(e.browserRequest(admin, "GET", "/v1/clusters", nil, 200), &remaining) != nil || len(remaining) != 2 {
+		t.Fatal("browser deregistration changed another registry entry")
+	}
+	for _, c := range remaining {
+		if c.ID == "web-retire" {
+			t.Fatal("deregistered cluster remained available in the browser")
+		}
+	}
+	var credentialsRemoved bool
+	if err = db.Pool.QueryRow(t.Context(), "SELECT kubeconfig_ciphertext IS NULL FROM clusters WHERE id='web-retire'").Scan(&credentialsRemoved); err != nil || !credentialsRemoved {
+		t.Fatal("browser deregistration retained upstream credentials", err)
+	}
+	upstream.mu.Lock()
+	requestsAfterDeregistration := len(upstream.Requests)
+	upstream.mu.Unlock()
+	if requestsAfterDeregistration != requestsBeforeDeregistration {
+		t.Fatal("browser deregistration contacted Kubernetes")
+	}
+	t.Log("browser administrator deregistration enforces CSRF/roles/active-booking conflicts and preserves history without Kubernetes calls")
 	e.browserRequest(aliceAgain, "POST", "/auth/logout", nil, 200)
 	if _, err = db.VerifyPAT(t.Context(), preservedSecret); err == nil {
 		t.Fatal("later logout revived an explicitly revoked PAT")

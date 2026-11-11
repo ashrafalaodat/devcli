@@ -179,6 +179,7 @@ Sign in as `admin` and open **Administration**. Administrators can:
 - Set a developer override or clear it to inherit the default. The view shows held counts, effective limits and primary selections. Developers appear after their first application login.
 - Register an approved static kubeconfig, which is encrypted before storage. Registration and booking do not contact or modify Kubernetes.
 - Enable/disable maintenance, release bookings and revoke another user's PAT with an audit reason.
+- Deregister an unused cluster from **Administration → Cluster placement controls** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
 - Inspect allocation and administration audit records. Credential values are never displayed.
 
 Lower booking-count limits never evict holders. Inactivity-period changes update current deadlines from their last activity; shortening the period can release idle bookings. Maintenance blocks new placement without ending current reservations. Administrative release updates primary selection using the same safe application state path as owner release; no Kubernetes workloads are removed.
@@ -194,7 +195,10 @@ devctl admin limit OWNER_ID --reset --reason 'Use the team default'
 devctl admin maintenance CLUSTER_ID --reason 'Planned maintenance'
 devctl admin maintenance CLUSTER_ID --enabled=false --reason 'Maintenance complete'
 devctl admin release BOOKING_ID --reason 'Owner requested release'
+devctl admin deregister CLUSTER_ID --reason 'Retiring environment'
 ```
+
+Deregistration removes the stored kubeconfig and hides the cluster from booking/availability lists. Historical bookings, idempotency keys and audit events retain archived public metadata. Repeating the command is safe. Retired IDs cannot be reused; register again with a new ID (the display name may be reused). No Kubernetes request is made, workloads remain, and PATs keep their independent validity. Database backups may still contain previous encrypted credentials until their retention period ends. [ADR007](docs/adr-007.md) records this choice.
 
 ## Packaging and tests
 

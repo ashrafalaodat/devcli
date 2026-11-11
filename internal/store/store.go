@@ -91,7 +91,7 @@ func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
 	return out, rows.Err()
 }
 func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster, error) {
-	rows, e := t.Query(ctx, "SELECT id,name,labels,maintenance,COALESCE(controller_session,''),shareable,max_participants FROM clusters ORDER BY id")
+	rows, e := t.Query(ctx, "SELECT id,name,labels,maintenance,COALESCE(controller_session,''),shareable,max_participants FROM clusters WHERE deregistered_at IS NULL ORDER BY id")
 	if e != nil {
 		return nil, e
 	}
@@ -106,25 +106,7 @@ func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster,
 		if e = json.Unmarshal(raw, &c.Labels); e != nil {
 			return nil, e
 		}
-		c.Participants = []model.Session{}
-		for _, s := range ss {
-			if s.Cluster == c.ID && s.State == "ACTIVE" {
-				c.Participants = append(c.Participants, s)
-			}
-		}
-		c.Available = !c.Maintenance && (len(c.Participants) == 0 || c.Shareable && len(c.Participants) < c.MaxParticipants)
-		switch {
-		case c.Maintenance:
-			c.Reason = "maintenance: new bookings disabled"
-		case len(c.Participants) == 0:
-			c.Reason = "available for exclusive booking"
-		case c.Shareable && c.Available:
-			c.Reason = "holder enabled sharing; co-users and their contact details are visible"
-		case c.Shareable:
-			c.Reason = "sharing participant limit reached"
-		default:
-			c.Reason = "reserved exclusively; holder may enable sharing"
-		}
+		populateCluster(&c, ss)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -396,7 +378,7 @@ func (s *Store) Register(ctx context.Context, u model.Identity, c model.Cluster,
 			return e
 		}
 		if _, e = t.Exec(ctx, "INSERT INTO clusters(id,name,labels,kubeconfig_ciphertext,max_participants) VALUES($1,$2,$3,$4,$5)", c.ID, c.Name, labels, ciphertext, c.MaxParticipants); e != nil {
-			return errors.New("cluster ID or name already registered")
+			return errors.New("cluster ID already registered or retired, or display name already in use")
 		}
 		return t.audit(ctx, u.Key(), "register", c.ID, "encrypted static kubeconfig imported; no Kubernetes API calls")
 	})
@@ -406,7 +388,7 @@ func (s *Store) Maintain(ctx context.Context, u model.Identity, id string, on bo
 		return ErrForbidden
 	}
 	return s.update(ctx, func(t *Tx) error {
-		tag, e := t.Exec(ctx, "UPDATE clusters SET maintenance=$2 WHERE id=$1", id, on)
+		tag, e := t.Exec(ctx, "UPDATE clusters SET maintenance=$2 WHERE id=$1 AND deregistered_at IS NULL", id, on)
 		if e != nil {
 			return e
 		}
@@ -437,7 +419,7 @@ func (s *Store) Config(ctx context.Context, u model.Identity, id string) (string
 		if state != "ACTIVE" {
 			return ErrConflict
 		}
-		if e = t.QueryRow(ctx, "SELECT kubeconfig_ciphertext FROM clusters WHERE id=$1", cluster).Scan(&encrypted); e != nil {
+		if e = t.QueryRow(ctx, "SELECT kubeconfig_ciphertext FROM clusters WHERE id=$1 AND deregistered_at IS NULL", cluster).Scan(&encrypted); e != nil {
 			return e
 		}
 		return t.audit(ctx, u.Key(), "gateway", id, "loaded upstream credentials for server-side forwarding; no credentials delivered")
