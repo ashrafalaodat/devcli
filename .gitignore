@@ -1,6 +1,8 @@
 /bin/
 /dist/
 /.demo/
+# Personal downloaded kubeconfig; may contain a gateway PAT.
+/config
 *.test
 coverage.out
 .env

@@ -1,4 +1,6 @@
 .demo
+# Personal downloaded kubeconfig; may contain a gateway PAT.
+/config
 bin
 dist
 .git
