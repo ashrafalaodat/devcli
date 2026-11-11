@@ -143,7 +143,7 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 		t.Fatal("plugin refresh created another booking")
 	}
 	env.primaryKubectl(alice, path, "get", "--raw=/version")
-	statusRaw, err := runPlugin("status")
+	statusRaw, err := runPlugin("status", "--json")
 	if err != nil {
 		t.Fatal("plugin status failed")
 	}
@@ -161,7 +161,7 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 	}
 	env.run(admin, "admin", "register", "--id", "plugin-second", "--name", "Second plugin fixture", "--kubeconfig", secondConfig)
 	second := session(t, env.run(bootstrap, "start", "--cluster", "plugin-second"))
-	statusRaw, err = runPlugin("status")
+	statusRaw, err = runPlugin("status", "--json")
 	if err != nil || json.Unmarshal(statusRaw, &profile) != nil || profile.PrimarySession == nil || profile.PrimarySession.ID != first.ID {
 		t.Fatal("additional booking unexpectedly selected itself")
 	}

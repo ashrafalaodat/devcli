@@ -40,7 +40,7 @@ func TestPATDeveloperScopeDigestAndRecovery(t *testing.T) {
 		t.Fatal("invalid verified developer PAT", err)
 	}
 	register(t, s, "a")
-	a, _, err := s.Book(ctx, alice, model.Booking{TTL: "1m"}, "a")
+	a, _, err := s.Book(ctx, alice, model.Booking{}, "a")
 	if err != nil {
 		t.Fatal(err)
 	}

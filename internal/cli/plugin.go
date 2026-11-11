@@ -32,12 +32,12 @@ func newPluginCommand(c *Client) *cobra.Command {
 		}
 	}
 	root.AddCommand(&cobra.Command{Use: "login", Short: "Log in and print your stable gateway kubeconfig path without booking", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error { return c.pluginLogin(cmd.Context()) }})
-	root.AddCommand(&cobra.Command{Use: "status", Short: "Show your current primary booking and booking limit", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "status", Short: "Show your primary booking, inactivity deadline, and booking limit", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		var profile developerProfile
 		if err := c.request(cmd.Context(), "GET", "/v1/profile", nil, "", &profile); err != nil {
 			return err
 		}
-		return c.print(profile)
+		return c.printProfile(profile)
 	}})
 	root.AddCommand(&cobra.Command{Use: "switch CLUSTER", Short: "Switch to another cluster you already booked", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var profile developerProfile

@@ -29,15 +29,25 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Max    int    `json:"default_max_bookings"`
-		Reason string `json:"reason"`
+		Max    *int    `json:"default_max_bookings"`
+		Grace  *string `json:"inactivity_grace_period"`
+		Reason string  `json:"reason"`
 	}
-	if e := decode(w, r, &b); e != nil || b.Max < 1 || b.Max > 100 || strings.TrimSpace(b.Reason) == "" || len(b.Reason) > 1000 {
-		fail(w, 400, "default_max_bookings must be 1 through 100 and an audit reason is required")
+	if e := decode(w, r, &b); e != nil || (b.Max == nil && b.Grace == nil) || (b.Max != nil && (*b.Max < 1 || *b.Max > 100)) || strings.TrimSpace(b.Reason) == "" || len(b.Reason) > 1000 {
+		fail(w, 400, "provide default_max_bookings (1 through 100) and/or inactivity_grace_period (1m through 168h), with an audit reason")
 		return
 	}
-	e := s.Store.UpdateSettings(r.Context(), user(r), b.Max, b.Reason)
-	respond(w, e, map[string]string{"status": "booking default updated; existing bookings retained"})
+	var grace *time.Duration
+	if b.Grace != nil {
+		d, e := time.ParseDuration(*b.Grace)
+		if e != nil || d < time.Minute || d > 168*time.Hour || d%time.Second != 0 {
+			fail(w, 400, "inactivity_grace_period must be whole seconds from 1m through 168h")
+			return
+		}
+		grace = &d
+	}
+	e := s.Store.UpdateReservationPolicy(r.Context(), user(r), b.Max, grace, b.Reason)
+	respond(w, e, map[string]string{"status": "reservation policy updated; inactivity grace applies to current and future bookings"})
 }
 func (s *Server) developers(w http.ResponseWriter, r *http.Request) {
 	v, e := s.Store.Developers(r.Context(), user(r))
@@ -91,5 +101,24 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	v, e := s.Store.HeartbeatPrimary(r.Context(), user(r))
+	respond(w, e, v)
+}
+
+// Browser presence is an explicit interaction signal, separate from polling and
+// OAuth refresh. Pin it to the displayed primary so stale tabs cannot extend a
+// different booking after a selection change.
+func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
+	if !accessTokenCurrent(w, r) {
+		return
+	}
+	var b struct {
+		SessionID string `json:"session_id"`
+		Version   int64  `json:"selection_version"`
+	}
+	if e := decode(w, r, &b); e != nil || b.SessionID == "" || len(b.SessionID) > 128 || b.Version < 1 {
+		fail(w, 400, "session_id and positive selection_version for the current primary are required")
+		return
+	}
+	v, e := s.Store.RecordPrimaryActivity(r.Context(), user(r), b.SessionID, b.Version)
 	respond(w, e, v)
 }

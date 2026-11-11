@@ -302,3 +302,33 @@ func TestPrimaryHeartbeatStopsOnSelectionChangeAndNeverBooks(t *testing.T) {
 		t.Fatal("worker renewed a different selection or booked")
 	}
 }
+
+func TestPrimaryHeartbeatRefreshesAuthorizationWithoutClaimingActivity(t *testing.T) {
+	identity := testAccessIdentity()
+	var reads, authorizations atomic.Int32
+	c, _ := testAccessClient(t, func(w http.ResponseWriter, r *http.Request) {
+		activity := time.Now()
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/access":
+			if reads.Add(1) > 1 {
+				activity = activity.Add(-accessIdleLimit - time.Minute)
+			}
+		case r.Method == "POST" && r.URL.Path == "/v1/access/heartbeat":
+			authorizations.Add(1)
+		default:
+			t.Error("detached worker must not record human activity or book", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(primaryAccess{Session: model.Session{ID: sessionA, Owner: identity.Key(), State: "ACTIVE", LastActivityAt: &activity}, SelectionVersion: 1})
+	})
+	saveAccessTestToken(t, c)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.runPrimaryHeartbeat(ctx, identity.Key(), sessionA, 1, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 2 || authorizations.Load() != 1 {
+		t.Fatal("worker did not stop when genuine activity became stale", reads.Load(), authorizations.Load())
+	}
+}

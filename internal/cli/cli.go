@@ -205,7 +205,7 @@ func newCommand(c *Client) *cobra.Command {
 		}
 		return w.Flush()
 	}})
-	var cluster, ttl, idempotency string
+	var cluster, idempotency string
 	var selectors []string
 	start := &cobra.Command{Use: "start", Short: "Book a whole cluster; exclusive unless its holder enabled sharing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		labels, e := labelMap(selectors)
@@ -218,7 +218,7 @@ func newCommand(c *Client) *cobra.Command {
 		}
 		fmt.Fprintln(c.Err, "Request idempotency key:", key)
 		var out model.Session
-		e = c.request(cmd.Context(), "POST", "/v1/sessions", model.Booking{Cluster: cluster, Selector: labels, TTL: ttl}, key, &out)
+		e = c.request(cmd.Context(), "POST", "/v1/sessions", model.Booking{Cluster: cluster, Selector: labels}, key, &out)
 		if e != nil {
 			return e
 		}
@@ -230,7 +230,6 @@ func newCommand(c *Client) *cobra.Command {
 	}}
 	start.Flags().StringVar(&cluster, "cluster", "", "Cluster ID or display name (otherwise automatic selection)")
 	start.Flags().StringSliceVarP(&selectors, "selector", "l", nil, "Required labels, e.g. region=eu,type=test")
-	start.Flags().StringVar(&ttl, "ttl", "", "Optional expiry, e.g. 4h; default lasts until stop or logout")
 	start.Flags().StringVar(&idempotency, "idempotency-key", "", "Reuse this key when retrying a booking request")
 	root.AddCommand(start)
 	var all bool
@@ -255,29 +254,29 @@ func newCommand(c *Client) *cobra.Command {
 		if c.JSON {
 			return c.print(ss)
 		}
-		w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "SESSION\tCLUSTER\tPRIMARY\tDEVELOPER\tCONTACT\tSTATE\tEXPIRY")
-		for _, v := range ss {
-			expiry := "until stop/logout"
-			if v.ExpiresAt != nil {
-				expiry = v.ExpiresAt.UTC().Format(time.RFC3339)
-			}
-			fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%s\t%s\n", v.ID, v.Cluster, v.Primary, v.DisplayName, v.Email, v.State, expiry)
-		}
-		return w.Flush()
+		return c.printSessionTable(ss)
 	}}
 	sessions.Flags().BoolVar(&all, "all", false, "Show team bookings and contact details")
 	root.AddCommand(sessions)
-	root.AddCommand(&cobra.Command{Use: "status [SESSION_ID]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		var out any
-		path := "/v1/profile"
+	root.AddCommand(&cobra.Command{Use: "status [SESSION_ID]", Short: "Show bookings and their inactivity auto-release deadlines", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 {
-			path = sessionPath(args[0])
+			var out struct {
+				Session model.Session `json:"session"`
+				Cluster model.Cluster `json:"cluster"`
+			}
+			if e := c.request(cmd.Context(), "GET", sessionPath(args[0]), nil, "", &out); e != nil {
+				return e
+			}
+			if c.JSON {
+				return c.print(out)
+			}
+			return c.printSessionTable([]model.Session{out.Session})
 		}
-		if e := c.request(cmd.Context(), "GET", path, nil, "", &out); e != nil {
+		var out developerProfile
+		if e := c.request(cmd.Context(), "GET", "/v1/profile", nil, "", &out); e != nil {
 			return e
 		}
-		return c.print(out)
+		return c.printProfile(out)
 	}})
 	root.AddCommand(&cobra.Command{Use: "wait SESSION_ID", Short: "Check a booking (this version rejects conflicts rather than queueing)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var out struct {
@@ -301,16 +300,6 @@ func newCommand(c *Client) *cobra.Command {
 	}}
 	share.Flags().BoolVar(&disable, "off", false, "Block new participants; keep current bookings")
 	root.AddCommand(share)
-	var renewal string
-	renew := &cobra.Command{Use: "renew SESSION_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		var out any
-		if e := c.request(cmd.Context(), "POST", sessionPath(args[0])+"/renew", map[string]string{"ttl": renewal}, "", &out); e != nil {
-			return e
-		}
-		return c.print(out)
-	}}
-	renew.Flags().StringVar(&renewal, "ttl", "4h", "Extend optional expiry from now")
-	root.AddCommand(renew)
 	root.AddCommand(&cobra.Command{Use: "stop SESSION_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var out any
 		if e := c.request(cmd.Context(), "POST", sessionPath(args[0])+"/stop", nil, "", &out); e != nil {

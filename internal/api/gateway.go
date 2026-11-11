@@ -126,19 +126,10 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	} else {
 		u, e = s.Auth.Verify(setup, rawToken)
 	}
-	if e != nil {
+	if e != nil || !personal && (u.TokenExpiresAt.IsZero() || !u.TokenExpiresAt.After(time.Now())) {
 		cancelSetup()
 		gatewayStatus(w, 401, "Unauthorized", "invalid or expired credential; sign in or replace the PAT")
 		return
-	}
-	var authorized store.PrimaryAccess
-	if !personal {
-		authorized, e = s.Store.AuthorizePrimary(setup, u)
-		if e != nil {
-			cancelSetup()
-			gatewayFailure(w, e)
-			return
-		}
 	}
 	session, version, cluster, ciphertext, e := s.Store.PrimaryConfig(setup, u)
 	if e != nil {
@@ -146,17 +137,18 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		gatewayFailure(w, e)
 		return
 	}
-	if !personal && (authorized.Session.ID != session.ID || authorized.SelectionVersion != version) {
-		cancelSetup()
-		gatewayFailure(w, store.ErrConflict)
-		return
+	if !personal {
+		authorized, err := s.Store.AuthorizePrimary(setup, u)
+		if err != nil || authorized.Session.ID != session.ID || authorized.SelectionVersion != version {
+			cancelSetup()
+			if err == nil {
+				err = store.ErrConflict
+			}
+			gatewayFailure(w, err)
+			return
+		}
 	}
 	id := session.ID
-	if e = s.Store.TouchActivity(setup, u, id); e != nil {
-		cancelSetup()
-		gatewayStatus(w, 503, "ServiceUnavailable", "activity state unavailable")
-		return
-	}
 	raw, e := s.Vault.Open(cluster, ciphertext)
 	if e != nil {
 		cancelSetup()
@@ -289,7 +281,7 @@ func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelFunc, 
 				}
 			}
 			if e == nil {
-				e = s.Store.TouchActivity(check, u, id)
+				_, e = s.Store.RecordPrimaryActivity(check, u, id, version)
 			}
 			done()
 			if e != nil {

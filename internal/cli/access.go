@@ -23,6 +23,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// A detached worker maintains fresh SSO authorization only while genuine
+// activity is recent. It never records booking activity or extends inactivity
+// deadlines itself; the administrator's inactivity grace is a separate policy.
 const accessIdleLimit = 2 * time.Minute
 
 type developerProfile struct {
@@ -248,6 +251,7 @@ func (c *Client) runPrimaryHeartbeat(ctx context.Context, owner, session string,
 		if access.Session.ID != session || access.Session.Owner != owner || access.SelectionVersion != version || access.Session.State != "ACTIVE" || access.Session.LastActivityAt == nil || time.Since(*access.Session.LastActivityAt) > accessIdleLimit {
 			return nil
 		}
+		// Refresh gateway authorization for existing streams, not human presence.
 		if err = c.withToken(ctx, token.AccessToken, "POST", "/v1/access/heartbeat", nil, "", &access); err != nil {
 			return nil
 		}

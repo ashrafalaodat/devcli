@@ -126,6 +126,13 @@ func TestAdditionalBookingDoesNotChangePrimarySelection(t *testing.T) {
 			w.WriteHeader(400)
 			return
 		}
+		var booking map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&booking); err != nil {
+			t.Error(err)
+		}
+		if _, exists := booking["ttl"]; exists {
+			t.Error("booking still requests a fixed duration")
+		}
 		posts.Add(1)
 		_ = json.NewEncoder(w).Encode(model.Session{ID: sessionB, Cluster: "cluster-b", State: "ACTIVE"})
 	})

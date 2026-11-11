@@ -1,5 +1,37 @@
 # Gateway verification record
 
+## 2026-11-11: activity-based reservation retention
+
+Implemented and tested:
+
+- Removed booking duration from the browser and `devctl start`, and removed manual CLI renewal. Old booking TTL request fields are rejected; the former authenticated renewal endpoint returns410 with migration guidance. PAT/access-token lifetime controls remain supported and independent.
+- Added a durable administrator inactivity grace period: default4h, whole-second durations from1m through168h. CLI `admin settings --inactive-grace 4h --reason 'Team policy'` and browser Administration → Booking policy update it with an audit reason. Partial count/grace patches preserve omitted fields; combined changes are atomic. Shortening applies to already-idle current bookings, while increasing never revives expired ones.
+- Accepted gateway requests, still-authorized open streams, explicit primary selection and authenticated browser interaction extend only the exact current primary booking. PostgreSQL stores UTC activity/deadlines, throttles writes to15s and serializes activity with expiry/release using the reservation advisory lock. Ten rounds each of live/elapsed activity-versus-expiry races across two stores passed. Automatic primary promotion does not fabricate activity.
+- Browser presence follows actual trusted input on a visible page, with at most one send per30s and one pending observed interaction. Headless Chrome verified idle tabs, passive polling, synthetic events and hidden pages do not create self-renewing activity. Requests contain exact session ID/selection version, with server timestamps/policy; stale or foreign assertions are rejected. Real Keycloak browser tests verified authentication, CSRF and independent deadlines while holding two clusters.
+- OAuth token refresh and the detached authorization helper do not advance inactivity deadlines. A real-provider detached refresh test checked unchanged activity and deadline values. Moving OAuth authorization leases are bounded by verified JWT expiry and checked separately from reservation validity, so a valid stream survives its previous inactivity deadline after genuine activity extends it. Scripts and watches count as client activity, as requested; no human-presence claim is made.
+- The background worker released an inactive reservation while the CLI was closed. Idle release blocks gateway access and preserves PAT validity/expiry and Kubernetes workloads. Remaining bookings promote safely; ended reservations cannot be revived by stale heartbeats. Existing apply/log/exec/watch/port-forward gateway, sharing, owner/limit checks, refresh, PAT-survives-logout and restart regressions continue to pass.
+- Migration006 gives existing active bookings one full initial grace window without changing historical actual activity. Its version guard preserves the baseline and deadline across restart. The upgraded demo is ready over verified HTTPS9090: schema6, all four registry entries retained, booking-count default1 and inactivity grace14400seconds. Only the verified local host backend was restarted; identity/database containers were not recreated and no remote Kubernetes endpoint was contacted.
+
+Commands actually executed (Go temporary files used `TMPDIR` and `GOTMPDIR` under `/local/workspace/devctl-tmp`):
+
+| Command | Result |
+| --- | --- |
+| `make build` | Passed; backend, CLI and kubectl plugin binaries built |
+| `make test` | Passed with race detection; external-service suites skip without their configuration |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/store` | Passed; focused final store run6.262s |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/api -count=1` | Passed9.629s after the migration correction |
+| `make demo-test` | Passed; every internal package with real PostgreSQL, then real Keycloak CLI/plugin/stable-primary integration28.432s (7.53s/2.67s/17.21s). Browser case explicitly skipped here and run separately below |
+| `./scripts/browser-test.sh` | Passed3.562s (browser test2.54s), with disposable Keycloak, isolated PostgreSQL schema, actual SSO/CSRF and native kubectl/PAT against local TLS fixtures |
+| `node internal/webui/testdata/primary-ui.cjs` with installed Playwright | Passed; per-cluster presence, idle/hidden/polling guards, throttling, policy, primary, PAT, mobile and existing UI contracts |
+| `go test -race ./internal/cli` and `go test -race ./internal/webui` | Passed; final targeted CLI policy run1.208s, web UI1.048s |
+| `go vet ./...`, JavaScript/shell syntax and `git diff --check` | Passed |
+| OpenAPI reference/path-parameter validation and migration006 comparison | Passed;33 documented paths; standalone migration matches embedded SQL |
+| Verified backend restart, `/readyz`, served HTML and read-only database metadata | Passed; current UI removes duration/renewal and exposes admin inactivity policy |
+
+Tests caught and corrected a PostgreSQL named-argument typo in the initial migration, legacy integration parsers missing `--json` after human-readable status was added, and a browser test helper incorrectly reusing an idempotency key for a new post-release booking. The final runs above passed after these corrections. Validation used disposable TLS Kubernetes protocol fixtures, never the registered remote clusters.
+
+Implemented but not deployment-tested: corporate OIDC, this policy against real Kubernetes workloads, production proxies/load and desktop keyrings/non-Linux runtimes. Host binaries were rebuilt; the application backend container image was not rebuilt for this iteration. Deferred under the current coordination-only scope: Kubernetes privilege isolation, workload/storage cleanup, upstream credential revocation, resource accounting and queueing. API activity can continue unattended; conversely a running workload that makes no gateway requests has no automatic activity signal and can outlive its reservation.
+
 ## 2026-11-11: PATs survive sign-out
 
 Logout now preserves personal access tokens and their original expiry. It still releases all of the identity's bookings, clears the current native/browser login and attempts provider-supported OAuth refresh-token revocation. With no booking the saved PAT config receives the no-booked-cluster error; after a fresh login and explicit booking, the same file works again. Explicit PAT revocation and expiry remain enforced, and logout never restores an already revoked or expired PAT. This supersedes the logout/PAT-revocation behavior in earlier dated records below.

@@ -152,7 +152,7 @@ func (t *Tx) repair(ctx context.Context, cluster string) error {
 	return e
 }
 func (t *Tx) expire(ctx context.Context) error {
-	rows, e := t.Query(ctx, "UPDATE sessions SET state='EXPIRED',ended_at=clock_timestamp(),reason='optional lease expired; gateway requests denied; legacy credentials are not revoked' WHERE state='ACTIVE' AND expires_at<=clock_timestamp() RETURNING id,cluster_id,owner_id")
+	rows, e := t.Query(ctx, "UPDATE sessions SET state='EXPIRED',ended_at=clock_timestamp(),reason='inactivity grace period elapsed; gateway access denied; workloads and personal access tokens retained' WHERE state='ACTIVE' AND expires_at<=clock_timestamp() RETURNING id,cluster_id,owner_id")
 	if e != nil {
 		return e
 	}
@@ -178,7 +178,7 @@ func (t *Tx) expire(ctx context.Context) error {
 		if e = t.repair(ctx, v.cluster); e != nil {
 			return e
 		}
-		if e = t.audit(ctx, "system", "expire", v.id, "booking released; no Kubernetes mutation or credential revocation"); e != nil {
+		if e = t.audit(ctx, "system", "expire", v.id, "inactivity grace period elapsed; booking released without Kubernetes mutation or personal access token revocation"); e != nil {
 			return e
 		}
 	}
@@ -281,16 +281,14 @@ func (t *Tx) book(ctx context.Context, u model.Identity, b model.Booking, key st
 		if len(c.Participants) > 0 {
 			out.Reason = "joined holder-approved shared booking; coordinate manually with listed participants"
 		}
-		if b.TTL != "" {
-			ttl, e := time.ParseDuration(b.TTL)
-			if e != nil || ttl < time.Minute || ttl > 7*24*time.Hour {
-				return errors.New("TTL must be between 1m and 168h")
-			}
-			end := now.Add(ttl)
-			out.ExpiresAt = &end
+		grace, e := t.inactivityGrace(ctx)
+		if e != nil {
+			return e
 		}
+		end := now.Add(grace)
+		out.ExpiresAt = &end
 		identity, _ := json.Marshal(u)
-		_, e = t.Exec(ctx, "INSERT INTO sessions(id,owner_id,identity,cluster_id,state,created_at,expires_at,reason) VALUES($1,$2,$3,$4,'ACTIVE',$5,$6,$7)", out.ID, out.Owner, identity, out.Cluster, out.CreatedAt, out.ExpiresAt, out.Reason)
+		_, e = t.Exec(ctx, "INSERT INTO sessions(id,owner_id,identity,cluster_id,state,created_at,idle_anchor_at,expires_at,reason) VALUES($1,$2,$3,$4,'ACTIVE',$5,$5,$6,$7)", out.ID, out.Owner, identity, out.Cluster, out.CreatedAt, out.ExpiresAt, out.Reason)
 		if e != nil {
 			return e
 		}
@@ -386,43 +384,6 @@ func (s *Store) Logout(ctx context.Context, u model.Identity) error {
 			}
 		}
 		return t.audit(ctx, u.Key(), "logout", u.Key(), "released all bookings; personal gateway credentials preserved")
-	})
-}
-func (s *Store) Renew(ctx context.Context, u model.Identity, id string, ttl time.Duration) error {
-	return s.update(ctx, func(t *Tx) error {
-		if e := t.expire(ctx); e != nil {
-			return e
-		}
-		var owner, state string
-		var old *time.Time
-		e := t.QueryRow(ctx, "SELECT owner_id,state,expires_at FROM sessions WHERE id=$1", id).Scan(&owner, &state, &old)
-		if e != nil {
-			return e
-		}
-		if owner != u.Key() {
-			return ErrForbidden
-		}
-		if state != "ACTIVE" {
-			return ErrConflict
-		}
-		if old == nil {
-			return errors.New("session already has no expiry")
-		}
-		if ttl < time.Minute || ttl > 7*24*time.Hour {
-			return errors.New("TTL must be between 1m and 168h")
-		}
-		now, e := t.now(ctx)
-		if e != nil {
-			return e
-		}
-		end := now.Add(ttl)
-		if !end.After(*old) {
-			return errors.New("renewal must extend expiry")
-		}
-		if _, e = t.Exec(ctx, "UPDATE sessions SET expires_at=$2 WHERE id=$1", id, end); e != nil {
-			return e
-		}
-		return t.audit(ctx, u.Key(), "renew", id, ttl.String())
 	})
 }
 func (s *Store) Register(ctx context.Context, u model.Identity, c model.Cluster, ciphertext []byte) error {

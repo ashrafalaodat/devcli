@@ -46,10 +46,10 @@
             <form id="booking-form" class="form-grid">
               <label>Cluster<select id="booking-cluster" name="cluster"><option value="">Choose automatically</option></select></label>
               <label>Required labels<input name="selector" placeholder="region=eu,type=test" autocomplete="off"><span class="field-help">Optional, comma-separated key=value pairs</span></label>
-              <label>Booking duration<input name="ttl" placeholder="Until stop or logout" autocomplete="off"><span class="field-help">Optional: 4h, 24h, up to 168h</span></label>
               <button id="booking-submit" class="button primary align-start" type="submit">Book cluster <span aria-hidden="true">→</span></button>
             </form>
             <p id="booking-limit-help" class="field-help" aria-live="polite"></p>
+            <p class="field-help">Using a cluster keeps that booking reserved. After activity stops, it is released after the administrator’s inactivity period. Only the cluster being used is extended; workloads remain.</p>
           </section>
           <div class="section-heading"><h2>Your active bookings</h2><span id="booking-count" class="pill neutral">0 active</span></div>
           <div id="my-bookings" class="booking-list"></div>
@@ -64,7 +64,7 @@
         <section id="section-access" class="page-section hidden" aria-labelledby="access-title">
           <div class="page-heading"><div><div class="eyebrow">CONNECT YOUR TOOLS</div><h1 id="access-title">One backend. Three ways in.</h1><p>One stable configuration follows your primary cluster on every device. Book a cluster first, then choose how to connect.</p></div></div>
           <div class="access-grid">
-            <article class="panel access-card"><span class="option-number">01 / FULL CONTROL</span><h2>Developer CLI</h2><p>Book, select, share, renew, and stop environments. Administrator commands are available to approved admins.</p><pre>devctl login
+            <article class="panel access-card"><span class="option-number">01 / FULL CONTROL</span><h2>Developer CLI</h2><p>Book, select, share, and stop environments. Administrator commands are available to approved admins.</p><pre>devctl login
 devctl start
 export KUBECONFIG="$(devctl setup)"
 kubectl get pods
@@ -88,13 +88,14 @@ kubectl get namespaces</pre><span class="pill success">Only kubectl required</sp
         </section>
         <section id="section-admin" class="page-section hidden" aria-labelledby="admin-title">
           <div class="page-heading"><div><div class="eyebrow">ADMINISTRATION</div><h1 id="admin-title">Manage the workspace</h1><p>Administrative changes are audited. No action here deletes Kubernetes workloads.</p></div><button id="refresh-admin" class="button secondary" type="button">↻ Refresh</button></div>
-          <section class="panel" aria-labelledby="limits-title"><h2 id="limits-title">Developer booking limits</h2><p>Each developer can hold one cluster by default. Increase the default or set a developer-specific override. Lowering a limit preserves existing bookings and prevents new ones until the developer is below the limit.</p>
+          <section class="panel" aria-labelledby="limits-title"><h2 id="limits-title">Booking policy</h2><p>Each developer can hold one cluster by default. Increase the default or set a developer-specific override. Lowering a limit preserves existing bookings and prevents new ones until the developer is below the limit.</p>
             <form id="settings-form" class="form-grid">
               <label>Default maximum clusters<input id="default-booking-limit" name="default_max_bookings" type="number" min="1" max="100" value="1" required></label>
+              <label>Release after inactivity<input id="inactivity-grace-period" name="inactivity_grace_period" value="4h" required autocomplete="off"><span class="field-help">1m through 168h; default 4h. Applies to current and future bookings.</span></label>
               <label class="span-two">Audit reason<input name="reason" placeholder="Update the team booking policy" maxlength="500" required autocomplete="off"></label>
-              <button class="button primary align-start" type="submit">Save default limit</button>
+              <button class="button primary align-start" type="submit">Save booking policy</button>
             </form>
-            <p class="field-help">Limits apply across all browsers, terminals, profiles, and shared bookings for the same SSO identity.</p>
+            <p class="field-help">Limits apply across all browsers, terminals, profiles, and shared bookings for the same SSO identity. Kubernetes requests, open authenticated connections, primary selection, and interaction with a visible browser page extend only the selected booking. An idle tab or token refresh does not. Shortening inactivity time can release already-idle bookings.</p>
           </section>
           <div class="section-heading"><h2>Developer overrides</h2><span class="subtle">Leave the override empty to inherit the default</span></div>
           <div id="developer-list" class="panel table-wrap"></div>

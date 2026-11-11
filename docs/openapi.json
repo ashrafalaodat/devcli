@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "devctl reservation and Kubernetes gateway API",
-    "version": "0.4.0",
-    "description": "Whole-cluster reservations with an administrator-controlled developer booking limit (default one), an identity-wide primary selection, and one stable /k8s gateway. CLI and kubectl plugin use OIDC exec credentials with refresh; browser downloads contain a revocable developer-scoped PAT. Login, setup, refresh and Kubernetes requests never allocate a cluster. With no active primary, gateway requests return403 text/plain with \u201cno cluster is booked\u201d, so native kubectl discovery and raw requests preserve the actionable message. Control API /v1/access retains409 for the same reservation conflict. Original cluster credentials stay encrypted server-side. Existing bookings survive upgrade, but legacy session-scoped PATs are revoked; old /k8s/sessions/... and /k8s/auto/... connection paths return410 and require one fresh setup/download."
+    "version": "0.5.0",
+    "description": "Whole-cluster reservations with an administrator-controlled developer booking limit (default one), an identity-wide primary selection, and one stable /k8s gateway. CLI and kubectl plugin use OIDC exec credentials with refresh; browser downloads contain a revocable developer-scoped PAT. Login, setup, refresh and Kubernetes requests never allocate a cluster. With no active primary, gateway requests return403 text/plain with \u201cno cluster is booked\u201d, so native kubectl discovery and raw requests preserve the actionable message. Control API /v1/access retains409 for the same reservation conflict. Original cluster credentials stay encrypted server-side. Existing bookings survive upgrade, but legacy session-scoped PATs are revoked; old /k8s/sessions/... and /k8s/auto/... connection paths return410 and require one fresh setup/download. Reservations now use an administrator-controlled inactivity grace period (default 4h), rather than a booking duration or manual renewal. Only the used primary is extended. Actual Kubernetes requests, valid open streams, explicit selection and authenticated foreground interaction signals count; passive reads and OAuth refresh do not. Idle release preserves workloads and PATs."
   },
   "servers": [
     {
@@ -851,29 +851,9 @@
     },
     "/v1/sessions/{id}/renew": {
       "post": {
-        "summary": "Owner extends optional expiry",
-        "description": "Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "summary": "Retired manual reservation renewal",
+        "description": "Use cluster activity and administrator inactivity grace policy. This route always returns 410 after authentication.",
         "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Status"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Invalid access token or unapproved user",
             "content": {
@@ -894,28 +874,8 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Reservation conflict or invalid state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
+          "410": {
+            "description": "Manual renewal removed",
             "content": {
               "application/json": {
                 "schema": {
@@ -944,24 +904,7 @@
             "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "ttl": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "ttl"
-                ]
-              }
-            }
-          }
-        }
+        "deprecated": true
       }
     },
     "/v1/sessions/{id}/kubeconfig": {
@@ -1561,7 +1504,7 @@
             "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
           }
         ],
-        "description": "May be issued with no active booking. Carries only a gateway PAT and public connection metadata. The same PAT follows current primary across explicit booking/selection changes, until its own expiry or explicit revocation. Logout releases bookings but does not revoke the PAT. No session_id is accepted; its expiry is independent of reservation TTL."
+        "description": "May be issued with no active booking. Carries only a gateway PAT and public connection metadata. The same PAT follows current primary across explicit booking/selection changes, until its own expiry or explicit revocation. Logout releases bookings but does not revoke the PAT. No session_id is accepted; its expiry is independent of reservation inactivity deadline."
       }
     },
     "/v1/pats/{id}": {
@@ -2039,7 +1982,7 @@
             }
           }
         },
-        "description": "Changes selection globally for the authenticated identity. Additional bookings do not change primary automatically. Re-selecting the same primary is idempotent. Open streams remain pinned to their original selection and are closed after a real switch. Does not allocate, migrate workloads, revoke PATs or change their kubeconfig.",
+        "description": "Changes selection globally for the authenticated identity. Additional bookings do not change primary automatically. Re-selecting the same primary is idempotent. Open streams remain pinned to their original selection and are closed after a real switch. Does not allocate, migrate workloads, revoke PATs or change their kubeconfig. Explicit selection records activity only for the selected active booking; automatic promotion after another booking ends does not.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2216,7 +2159,7 @@
             }
           }
         },
-        "description": "Requires a fresh verified API token with real server-validated expiry and recent actual Kubernetes activity on the current primary. Empty body or {} only; client-supplied expiries, session IDs and versions are rejected. Does not allocate, extend booking TTL or count itself as activity.",
+        "description": "Requires a fresh verified API token with real server-validated expiry and recent accepted activity on the current primary. Empty body or {} only; client-supplied expiries, session IDs and versions are rejected. Refreshes only gateway OAuth authorization; never allocates or extends the booking inactivity deadline, and never records activity.",
         "requestBody": {
           "required": false,
           "content": {
@@ -2243,7 +2186,7 @@
     },
     "/v1/admin/settings": {
       "get": {
-        "summary": "Administrator view of the default developer booking limit",
+        "summary": "Administrator view of reservation count and inactivity policy",
         "responses": {
           "200": {
             "description": "Success",
@@ -2318,7 +2261,7 @@
         }
       },
       "patch": {
-        "summary": "Administrator update of the default developer booking limit",
+        "summary": "Atomically update administrator reservation policy",
         "responses": {
           "200": {
             "description": "Success",
@@ -2391,7 +2334,7 @@
             }
           }
         },
-        "description": "Initial default is one. Existing reservations are preserved even if a new effective limit is below a developer\u2019s current held count; new bookings are blocked until below the limit. Audit reason required.",
+        "description": "Partial patch with audit reason. Default maximum bookings starts at one; reducing the count does not evict existing bookings. Inactivity grace starts at 4h and applies immediately to current and future bookings based on the last actual activity or initial/migration baseline. Shortening can release already idle bookings; increasing never revives expired ones. Omitted fields are preserved.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2400,7 +2343,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "default_max_bookings",
                   "reason"
                 ],
                 "properties": {
@@ -2413,8 +2355,24 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1000
+                  },
+                  "inactivity_grace_period": {
+                    "type": "string",
+                    "description": "Whole-second Go duration between 1m and 168h, for example 2h or 30m."
                   }
-                }
+                },
+                "anyOf": [
+                  {
+                    "required": [
+                      "default_max_bookings"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "inactivity_grace_period"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -2645,7 +2603,7 @@
     "/k8s": {
       "get": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -2775,7 +2733,7 @@
       },
       "post": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -2942,7 +2900,7 @@
       },
       "put": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -3109,7 +3067,7 @@
       },
       "patch": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -3276,7 +3234,7 @@
       },
       "delete": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -3443,7 +3401,7 @@
       },
       "options": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -3573,7 +3531,7 @@
       },
       "head": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [],
         "responses": {
           "200": {
@@ -3705,7 +3663,7 @@
     "/k8s/{path}": {
       "get": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -3845,7 +3803,7 @@
       },
       "post": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4022,7 +3980,7 @@
       },
       "put": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4199,7 +4157,7 @@
       },
       "patch": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4376,7 +4334,7 @@
       },
       "delete": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4553,7 +4511,7 @@
       },
       "options": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4693,7 +4651,7 @@
       },
       "head": {
         "summary": "Forward a Kubernetes API request to the authenticated developer\u2019s current primary",
-        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route.",
+        "description": "Stable catch-all Kubernetes API gateway, not a remote shell endpoint. Validates a trusted API JWT or developer-scoped opaque PAT, resolves the current owned active primary from server state, and pins this request to its reservation and selection version. No primary returns403 text/plain with \u201cno cluster is booked\u201d, preserving the message in native typed/raw kubectl clients. Other gateway rejections use Kubernetes Status JSON as documented. Requests never allocate. Streams recheck credential validity, active reservation and unchanged primary; a switch closes old streams rather than migrating them. JWT streams can continue through fresh authenticated primary heartbeats during actual activity. PAT streams recheck PAT expiry/revocation separately. Original upstream credentials remain server-side, caller identity headers are stripped, verified upstream HTTPS uses HTTP/1.1 for WebSocket/SPDY, and Kubernetes content/status/queries are preserved. Browser cookies never authenticate this route. Accepted requests and still-authorized open streams extend only this primary booking\u2019s inactivity deadline. Automated API clients count as activity. Release preserves upstream workloads and PATs.",
         "parameters": [
           {
             "name": "path",
@@ -4831,6 +4789,122 @@
           }
         ]
       }
+    },
+    "/v1/activity": {
+      "post": {
+        "summary": "Record foreground interaction on the exact owned primary",
+        "responses": {
+          "200": {
+            "description": "Current reservation with computed inactivity deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Authenticated presence assertion used by visible browser UI after actual input. It is not proof of human presence. Exact booking ID and selection version prevent a stale tab from extending a newly selected cluster. Server supplies timestamps and inactivity policy; no client duration, expiry or timestamp accepted. Throttled to 15s persistence; cannot revive an expired booking. Browser cookie requests require Origin and CSRF. PATs cannot call this control endpoint.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "session_id",
+                  "selection_version"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "selection_version": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -4851,7 +4925,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "PAT",
-        "description": "Opaque dcpat_ personal credential accepted ONLY by /k8s. It follows that authenticated developer\u2019s current active primary and cannot call control/admin APIs, book, switch primary or refresh itself. Default8h/max168h, independent of booking TTL; individually revocable. No booking is needed to issue it."
+        "description": "Opaque dcpat_ personal credential accepted ONLY by /k8s. It follows that authenticated developer\u2019s current active primary and cannot call control/admin APIs, book, switch primary or refresh itself. Default8h/max168h, independent of booking inactivity deadline; individually revocable. No booking is needed to issue it."
       }
     },
     "schemas": {
@@ -4927,12 +5001,13 @@
           },
           "expires_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Server-computed inactivity auto-release deadline, advanced by accepted activity. Required for active reservations; not a fixed booking duration."
           },
           "last_activity_at": {
             "type": "string",
             "format": "date-time",
-            "description": "Last accepted Kubernetes API request or authorized open stream observation; control-plane heartbeat calls do not count as activity."
+            "description": "Last persisted accepted primary Kubernetes request, authorized open stream observation, explicit selection or foreground browser interaction signal. Writes are throttled to 15s. Polling and OAuth heartbeats do not count."
           },
           "primary": {
             "type": "boolean",
@@ -5010,12 +5085,10 @@
             "additionalProperties": {
               "type": "string"
             }
-          },
-          "ttl": {
-            "type": "string",
-            "description": "Optional Go duration, 1m through 168h; omitted means no expiry"
           }
-        }
+        },
+        "additionalProperties": false,
+        "description": "Explicit whole-cluster booking. Auto-release deadline derives from administrator inactivity policy; client booking inactivity deadlines are rejected."
       },
       "Error": {
         "type": "object",
@@ -5129,7 +5202,7 @@
             "format": "date-time"
           }
         },
-        "description": "Public credential metadata only; digest and secret are never listed. Expiry is independent of booking TTL, so a valid PAT can access a later explicitly booked primary for the same identity."
+        "description": "Public credential metadata only; digest and secret are never listed. Expiry is independent of booking inactivity deadline, so a valid PAT can access a later explicitly booked primary for the same identity."
       },
       "PATRequest": {
         "type": "object",
@@ -5146,7 +5219,7 @@
           "ttl": {
             "type": "string",
             "default": "8h",
-            "description": "1m through168h, default8h. Independent of booking expiry; no sliding renewal."
+            "description": "1m through168h, default8h. Independent of reservation inactivity deadline; no sliding renewal."
           }
         }
       },
@@ -5269,7 +5342,8 @@
       "Settings": {
         "type": "object",
         "required": [
-          "default_max_bookings"
+          "default_max_bookings",
+          "inactivity_grace_period"
         ],
         "properties": {
           "default_max_bookings": {
@@ -5277,6 +5351,11 @@
             "minimum": 1,
             "maximum": 100,
             "default": 1
+          },
+          "inactivity_grace_period": {
+            "type": "string",
+            "default": "4h0m0s",
+            "description": "Go duration in whole seconds, 1m through 168h. Applied to each booking independently from its last activity or initial baseline."
           }
         }
       },
@@ -5313,7 +5392,7 @@
           "authorization_expires_at": {
             "type": "string",
             "format": "date-time",
-            "description": "Current server authorization lease for this exact primary version. May be the zero UTC timestamp before gateway authorization. A fresh JWT heartbeat may renew it only during actual recent Kubernetes activity; capped by JWT expiry and booking expiry."
+            "description": "OAuth authorization lease for this exact primary version, bounded by verified JWT expiry. Gateway additionally enforces the independently moving inactivity deadline and current selection; token refresh alone does not extend a booking."
           }
         }
       },

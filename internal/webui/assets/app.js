@@ -13,7 +13,7 @@
   };
   const clear = node => node.replaceChildren();
   const pill = (text, tone = 'neutral') => element('span', text, `pill ${tone}`);
-  const date = raw => raw ? new Date(raw).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : 'Until stop or logout';
+  const date = raw => raw ? new Date(raw).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—';
   const owner = () => state.session && state.session.owner_id;
   const mine = () => state.sessions.filter(s => s.owner === owner());
   const active = () => mine().filter(s => s.state === 'ACTIVE');
@@ -61,6 +61,7 @@
     return out;
   }
   function signedOut() {
+    clearPresence();
     state.session = null; state.profile = null; state.settings = null; state.developers = []; state.clusters = []; state.sessions = []; state.pats = []; state.allPats = []; state.audit = [];
     $('welcome').classList.remove('hidden'); $('workspace').classList.add('hidden');
     clear($('identity'));
@@ -109,7 +110,7 @@
     node.append(body); target.append(node);
   }
   function contact(session) { const node = element('div'); node.append(element('strong', session.display_name || session.name || 'Developer')); if (session.email) { const a = element('a', session.email); a.href = `mailto:${encodeURIComponent(session.email)}`; node.append(element('br'), a); } else node.append(element('small', session.name || session.owner.slice(0, 12))); return node; }
-  function detail(label, value) { const node = element('div'); node.append(element('span', label, 'detail-label'), element('span', value, 'text-break')); return node; }
+  function detail(label, value, className = '') { const node = element('div'); node.append(element('span', label, 'detail-label'), element('span', value, `text-break ${className}`)); return node; }
   function sessionAction(id, suffix, body) { return api(`/v1/sessions/${encodeURIComponent(id)}/${suffix}`, {method: 'POST', body}); }
   function renderPrimary() {
     const profile = state.profile, primary = profile.primary_session, target = $('primary-summary'); clear(target);
@@ -132,7 +133,8 @@
       const c = cluster(s.cluster), card = element('article', null, `booking-card${isPrimary ? ' primary-booking' : ''}`), top = element('div', null, 'card-top'), title = element('div', null, 'card-title');
       title.append(element('span', '◇', 'cluster-mark')); const info = element('div'); info.append(element('h3', clusterName(s.cluster)), element('small', s.cluster)); title.append(info); top.append(title);
       const badges = element('div', null, 'labels'); if (isPrimary) badges.append(pill('Primary', 'success')); badges.append(pill(c && c.shareable ? 'Shared' : 'Exclusive', c && c.shareable ? 'warning' : 'neutral')); top.append(badges); card.append(top);
-      const details = element('div', null, 'details'); details.append(detail('Expires', date(s.expires_at)), detail('Last activity', s.last_activity_at ? date(s.last_activity_at) : 'No requests yet')); card.append(details);
+      card.dataset.sessionId = s.id;
+      const details = element('div', null, 'details'); details.append(detail('Auto-release', date(s.expires_at), 'booking-auto-release'), detail('Last activity', s.last_activity_at ? date(s.last_activity_at) : 'No requests yet', 'booking-last-activity')); card.append(details);
       const actions = element('div', null, 'card-actions');
       if (!isPrimary) actions.append(button('Make primary', 'primary small', async () => {
         if (!window.confirm(`Use ${clusterName(s.cluster)} as your primary cluster on all devices? Open connections to the previous primary will close.`)) return;
@@ -140,10 +142,9 @@
       }));
       if (c && c.controller_session === s.id) actions.append(button(c.shareable ? 'Disable sharing' : 'Allow sharing', 'secondary small', async () => { await sessionAction(s.id, 'share', {shareable: !c.shareable}); await refresh(); notify(c.shareable ? 'New shared bookings are now disabled.' : 'Sharing enabled. Other developers can join this cluster.'); }));
       actions.append(button('Stop', 'danger small', async () => { if (!window.confirm(`Release your booking on ${clusterName(s.cluster)}? If it is primary, your oldest remaining booking becomes primary. Kubernetes workloads will remain.`)) return; await sessionAction(s.id, 'stop'); await refresh(); notify('Booking released. Your primary selection was updated; personal tokens and Kubernetes workloads were retained.'); })); card.append(actions);
-      const renew = element('form', null, 'renew-form'), input = element('input'); input.name = 'ttl'; input.value = '4h'; input.required = true; input.setAttribute('aria-label', `Renew ${s.cluster} duration`); const submit = element('button', 'Renew lease', 'button secondary small'); submit.type = 'submit'; renew.append(input, submit);
-      renew.addEventListener('submit', event => { event.preventDefault(); run(submit, async () => { await sessionAction(s.id, 'renew', {ttl: input.value.trim()}); await refresh(); notify('Booking lease renewed. Your personal token expiry is unchanged.'); }); }); card.append(renew, element('span', s.id, 'mono booking-id')); node.append(card);
+      card.append(element('span', s.id, 'mono booking-id')); node.append(card);
     }
-    table($('team-bookings'), ['Cluster', 'Developer / contact', 'Access', 'Expires'], state.sessions.filter(s => s.state === 'ACTIVE').map(s => [clusterName(s.cluster), contact(s), pill((cluster(s.cluster) || {}).shareable ? 'Shared' : 'Exclusive', (cluster(s.cluster) || {}).shareable ? 'warning' : 'neutral'), date(s.expires_at)]), 'No active team bookings.');
+    table($('team-bookings'), ['Cluster', 'Developer / contact', 'Access', 'Auto-release'], state.sessions.filter(s => s.state === 'ACTIVE').map(s => [clusterName(s.cluster), contact(s), pill((cluster(s.cluster) || {}).shareable ? 'Shared' : 'Exclusive', (cluster(s.cluster) || {}).shareable ? 'warning' : 'neutral'), date(s.expires_at)]), 'No active team bookings.');
     table($('booking-history'), ['Cluster', 'Booking', 'State', 'Ended'], mine().filter(s => s.state !== 'ACTIVE').slice().reverse().map(s => [clusterName(s.cluster), s.id, pill(s.state), date(s.ended_at)]), 'No previous bookings.');
   }
   function labelsNode(labels) { const node = element('div', null, 'labels'); for (const [key, value] of Object.entries(labels || {})) node.append(element('span', `${key}=${value}`, 'label')); return node; }
@@ -184,6 +185,7 @@
   function renderDeveloperLimits() {
     if (!state.session.user.admin) return;
     $('default-booking-limit').value = state.settings.default_max_bookings;
+    $('inactivity-grace-period').value = state.settings.inactivity_grace_period;
     const rows = state.developers.map(profile => {
       const primary = profile.primary_session;
       const form = element('form', null, 'developer-limit-form'), input = element('input'), reason = element('input'), submit = element('button', 'Save limit', 'button secondary small');
@@ -212,6 +214,48 @@
       populateSelect($('release-session'), state.sessions.filter(s => s.state === 'ACTIVE').map(s => ({value: s.id, text: `${clusterName(s.cluster)} · ${s.display_name || s.name} · ${s.id.slice(0, 10)}`})), 'Select a booking');
     } finally { state.refreshing = false; }
   }
+  // Presence is sent only for actual input on a visible page. A pending send
+  // represents one observed interaction, never a self-renewing heartbeat.
+  const presence = {pending: null, timer: null, sending: false, lastSent: 0};
+  const currentSelection = () => {
+    const profile = state.profile, selected = profile && profile.primary_session;
+    return state.session && selected && selected.state === 'ACTIVE' ? {session_id: selected.id, selection_version: profile.selection_version} : null;
+  };
+  const sameSelection = (a, b) => a && b && a.session_id === b.session_id && a.selection_version === b.selection_version;
+  function clearPresence() {
+    window.clearTimeout(presence.timer); presence.timer = null; presence.pending = null;
+  }
+  function schedulePresence() {
+    if (!presence.pending || presence.sending || presence.timer) return;
+    presence.timer = window.setTimeout(sendPresence, Math.max(0, 30000 - (Date.now() - presence.lastSent)));
+  }
+  async function sendPresence() {
+    presence.timer = null;
+    const selected = presence.pending; presence.pending = null;
+    if (document.visibilityState !== 'visible' || !sameSelection(selected, currentSelection())) return;
+    presence.sending = true; presence.lastSent = Date.now();
+    try {
+      const updated = await api('/v1/activity', {method: 'POST', body: selected});
+      if (updated && sameSelection(selected, currentSelection())) {
+        Object.assign(state.profile.primary_session, updated);
+        const session = state.sessions.find(s => s.id === selected.session_id); if (session) Object.assign(session, updated);
+        // Preserve in-progress inputs and click targets while refreshing metadata.
+        for (const card of document.querySelectorAll('.booking-card')) if (card.dataset.sessionId === selected.session_id) {
+          card.querySelector('.booking-auto-release').textContent = date(updated.expires_at);
+          card.querySelector('.booking-last-activity').textContent = updated.last_activity_at ? date(updated.last_activity_at) : 'No requests yet';
+        }
+      }
+    } catch (_) { if (state.session) refresh().catch(() => {}); }
+    finally { presence.sending = false; schedulePresence(); }
+  }
+  function interacted(event) {
+    if (!event.isTrusted || document.visibilityState !== 'visible') return;
+    const selected = currentSelection(); if (!selected) return;
+    presence.pending = selected; schedulePresence();
+  }
+  for (const name of ['pointerdown', 'keydown', 'wheel', 'touchstart']) document.addEventListener(name, interacted, {passive: true});
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') clearPresence(); });
+
   function downloadConfig(raw, name) {
     const blob = new Blob([raw], {type: 'application/yaml'}), href = URL.createObjectURL(blob), link = element('a');
     link.href = href; link.download = `${safeName(name)}.yaml`; document.body.append(link); link.click(); link.remove();
@@ -221,7 +265,7 @@
   for (const nav of document.querySelectorAll('[data-section]')) nav.addEventListener('click', () => showSection(nav.dataset.section));
   for (const id of ['refresh-overview', 'refresh-clusters', 'refresh-pats', 'refresh-admin']) $(id).addEventListener('click', () => run($(id), refresh));
   submit('booking-form', async (form, data) => {
-    const body = {cluster: String(data.get('cluster') || ''), selector: parseLabels(String(data.get('selector') || '')), ttl: String(data.get('ttl') || '').trim()};
+    const body = {cluster: String(data.get('cluster') || ''), selector: parseLabels(String(data.get('selector') || ''))};
     const key = form.dataset.requestKey || crypto.randomUUID(); form.dataset.requestKey = key;
     const result = await api('/v1/sessions', {method: 'POST', body, headers: {'Idempotency-Key': key}});
     delete form.dataset.requestKey; await refresh(); notify(`Booked ${clusterName(result.cluster)}. Session ${result.id}.`);
@@ -236,7 +280,7 @@
   });
   submit('settings-form', async (form, data) => {
     const reason = String(data.get('reason')).trim(); if (!reason) throw new Error('An audit reason is required.');
-    await api('/v1/admin/settings', {method: 'PATCH', body: {default_max_bookings: Number(data.get('default_max_bookings')), reason}}); form.reset(); await refresh(); notify('Default booking limit updated. Existing bookings were preserved.');
+    await api('/v1/admin/settings', {method: 'PATCH', body: {default_max_bookings: Number(data.get('default_max_bookings')), inactivity_grace_period: String(data.get('inactivity_grace_period')).trim(), reason}}); form.reset(); await refresh(); notify('Booking policy updated. The inactivity period applies to current and future bookings.');
   });
   submit('register-form', async (form, data) => {
     if (!state.session.user.admin) throw new Error('Administrator required.');

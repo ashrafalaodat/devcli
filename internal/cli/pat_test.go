@@ -105,6 +105,28 @@ func TestPersonalCreateWritesPrivateFileAndOnlyPath(t *testing.T) {
 	}
 }
 
+func TestPersonalCredentialDurationRemainsIndependentOfBookingActivity(t *testing.T) {
+	c, out, diagnostics := personalTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/pats" {
+			t.Error("unexpected credential request", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["ttl"] != "168h" {
+			t.Error("PAT duration flag was removed or changed", body["ttl"])
+		}
+		personalResponse(w, personalTestID)
+	})
+	if err := executePersonal(t, c, "--ttl", "168h"); err != nil {
+		t.Fatal(err)
+	}
+	assertPersonalSecretHidden(t, out, diagnostics, nil)
+}
+
 func TestPersonalCreatePreservesFilesAndReportsRevocation(t *testing.T) {
 	for _, kind := range []string{"regular", "symlink"} {
 		for _, revoked := range []bool{false, true} {

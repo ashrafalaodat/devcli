@@ -2,9 +2,7 @@ package integration
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -22,6 +20,7 @@ import (
 	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/store"
 	"devctl.local/devctl/internal/testutil"
+	"github.com/google/uuid"
 	"golang.org/x/net/html"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -99,8 +98,9 @@ func (e *environment) browserRequest(b *browserSession, method, path string, bod
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", b.csrf)
 	req.Header.Set("Origin", e.api)
-	requestHash := sha256.Sum256(append([]byte(b.user.Subject+path), data...))
-	req.Header.Set("Idempotency-Key", "browser-test-"+hex.EncodeToString(requestHash[:]))
+	// Each helper call is a distinct user action. Retrying one action with the
+	// same key is covered separately; rebooking after release needs a new key.
+	req.Header.Set("Idempotency-Key", "browser-test-"+uuid.NewString())
 	resp, err := b.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -211,8 +211,48 @@ func TestBrowserAccess(t *testing.T) {
 	if additional.Primary {
 		t.Fatal("second browser booking replaced primary")
 	}
+	// Real browser authentication + CSRF protects foreground presence. The idle
+	// clock belongs to one booking, independently of the identity's other holds.
+	var presenceProfile model.DeveloperProfile
+	if json.Unmarshal(e.browserRequest(alice, "GET", "/v1/profile", nil, 200), &presenceProfile) != nil {
+		t.Fatal("invalid primary profile")
+	}
+	if _, err = db.Pool.Exec(t.Context(), `UPDATE sessions SET
+ last_activity_at=clock_timestamp()-interval '90 seconds',
+ expires_at=clock_timestamp()+interval '2 minutes' WHERE id IN ($1,$2)`, booked.ID, additional.ID); err != nil {
+		t.Fatal(err)
+	}
+	var untouchedDeadline time.Time
+	if err = db.Pool.QueryRow(t.Context(), "SELECT expires_at FROM sessions WHERE id=$1", additional.ID).Scan(&untouchedDeadline); err != nil {
+		t.Fatal(err)
+	}
+	presenceBody := map[string]any{"session_id": booked.ID, "selection_version": presenceProfile.SelectionVersion}
+	e.browserRequest(bob, "POST", "/v1/activity", presenceBody, 409)
+	noCSRF, err := http.NewRequest("POST", e.api+"/v1/activity", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	noCSRF.Header.Set("Origin", e.api)
+	rejected, err := alice.client.Do(noCSRF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Body.Close()
+	if rejected.StatusCode != 403 {
+		t.Fatal("presence accepted browser mutation without CSRF")
+	}
+	var used model.Session
+	if json.Unmarshal(e.browserRequest(alice, "POST", "/v1/activity", presenceBody, 200), &used) != nil || used.ExpiresAt == nil || time.Until(*used.ExpiresAt) < 3*time.Hour {
+		t.Fatal("authenticated interaction did not extend current primary")
+	}
+	var stillUntouched time.Time
+	if err = db.Pool.QueryRow(t.Context(), "SELECT expires_at FROM sessions WHERE id=$1", additional.ID).Scan(&stillUntouched); err != nil || !stillUntouched.Equal(untouchedDeadline) {
+		t.Fatal("activity on one cluster extended the other booking")
+	}
+	e.browserRequest(alice, "POST", "/v1/sessions/"+booked.ID+"/renew", map[string]string{"ttl": "4h"}, 410)
 	expectVersion("v1.35.1-browser-a")
 	e.browserRequest(alice, "POST", "/v1/primary", map[string]string{"cluster": "web-other"}, 200)
+	e.browserRequest(alice, "POST", "/v1/activity", presenceBody, 409)
 	expectVersion("v1.36.0-browser-b")
 	e.browserRequest(alice, "POST", "/v1/primary", map[string]string{"cluster": booked.ID}, 200)
 	expectVersion("v1.35.1-browser-a")
@@ -232,7 +272,7 @@ func TestBrowserAccess(t *testing.T) {
 	e.browserRequest(alice, "POST", "/v1/sessions/"+additional.ID+"/stop", nil, 200)
 	expectNoBooking()
 	// An explicit new booking restores access with the exact same saved token.
-	restored := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-other", TTL: "1h"}, 201))
+	restored := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-other"}, 201))
 	if !restored.Primary {
 		t.Fatal("new booking after release did not become primary")
 	}
@@ -377,7 +417,7 @@ func TestBrowserAccess(t *testing.T) {
 		t.Fatal("browser logout retained its provider refresh token", provider.StatusCode)
 	}
 	aliceAgain := e.browserLogin("alice", true)
-	newBooking := session(t, e.browserRequest(aliceAgain, "POST", "/v1/sessions", model.Booking{Cluster: "web-other", TTL: "30m"}, 201))
+	newBooking := session(t, e.browserRequest(aliceAgain, "POST", "/v1/sessions", model.Booking{Cluster: "web-other"}, 201))
 	expectVersion("v1.36.0-browser-b")
 	savedConfig, err = os.ReadFile(configPath)
 	if err != nil || !bytes.Equal(savedConfig, []byte(preserved.Kubeconfig)) {

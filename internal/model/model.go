@@ -63,12 +63,12 @@ type DeveloperProfile struct {
 }
 
 type Settings struct {
-	DefaultMaxBookings int `json:"default_max_bookings"`
+	DefaultMaxBookings    int    `json:"default_max_bookings"`
+	InactivityGracePeriod string `json:"inactivity_grace_period"`
 }
 type Booking struct {
 	Cluster  string            `json:"cluster,omitempty"`
 	Selector map[string]string `json:"selector,omitempty"`
-	TTL      string            `json:"ttl,omitempty"`
 }
 
 func Match(c Cluster, b Booking) bool {

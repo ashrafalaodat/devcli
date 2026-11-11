@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /v1/primary", s.selectPrimary)
 	m.HandleFunc("GET /v1/access", s.access)
 	m.HandleFunc("POST /v1/access/heartbeat", s.heartbeat)
+	m.HandleFunc("POST /v1/activity", s.activity)
 	m.HandleFunc("/v1/auto/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusGone, "automatic booking bindings were removed; book explicitly and use your primary cluster")
 	})
@@ -113,7 +114,9 @@ func (s *Server) Handler() http.Handler {
 		respond(w, e, map[string]string{"status": "released"})
 	})
 	m.HandleFunc("POST /v1/sessions/{id}/share", s.share)
-	m.HandleFunc("POST /v1/sessions/{id}/renew", s.renew)
+	m.HandleFunc("POST /v1/sessions/{id}/renew", func(w http.ResponseWriter, r *http.Request) {
+		fail(w, http.StatusGone, "manual renewal was removed; cluster activity extends the administrator-configured inactivity deadline")
+	})
 	m.HandleFunc("GET /v1/sessions/{id}/connection", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusGone, "per-booking connection metadata was removed; use /v1/connection")
 	})
@@ -202,13 +205,6 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid booking JSON")
 		return
 	}
-	if b.TTL != "" {
-		d, e := time.ParseDuration(b.TTL)
-		if e != nil || d < time.Minute || d > 168*time.Hour {
-			fail(w, 400, "TTL must be 1m through 168h, or omitted for no expiry")
-			return
-		}
-	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 128 {
 		fail(w, 400, "Idempotency-Key required (max 128 bytes)")
@@ -235,22 +231,6 @@ func (s *Server) share(w http.ResponseWriter, r *http.Request) {
 	}
 	e := s.Store.Share(r.Context(), user(r), r.PathValue("id"), *b.Shareable)
 	respond(w, e, map[string]any{"shareable": *b.Shareable})
-}
-func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		TTL string `json:"ttl"`
-	}
-	if e := decode(w, r, &b); e != nil {
-		fail(w, 400, "TTL required")
-		return
-	}
-	ttl, e := time.ParseDuration(b.TTL)
-	if e != nil || ttl < time.Minute || ttl > 168*time.Hour {
-		fail(w, 400, "TTL must be 1m through 168h")
-		return
-	}
-	e = s.Store.Renew(r.Context(), user(r), r.PathValue("id"), ttl)
-	respond(w, e, map[string]string{"status": "renewed"})
 }
 
 var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)

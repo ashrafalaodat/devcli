@@ -10,8 +10,8 @@ const assets = path.resolve(__dirname, '../assets');
 const alice = {issuer: 'https://issuer.test', subject: 'alice', name: 'alice', display_name: 'Alice <img src=x onerror=alert(1)>', email: 'alice@example.test', admin: false};
 const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'admin', display_name: 'Administrator', email: 'admin@example.test', admin: true};
 const state = {
-  primary: 's-a', version: 1, defaultLimit: 1, override: 2, serial: 0, pats: [], mutations: [], signedOut: false,
-  sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: '2026-01-01T00:00:00Z', reason: 'fixture'})),
+  primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, pats: [], mutations: [], signedOut: false,
+  sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: '2026-01-01T00:00:00Z', expires_at: '2026-01-01T04:00:00Z', reason: 'fixture'})),
 };
 let origin;
 const sessionRows = () => state.sessions.map(s => ({...s, primary: s.id === state.primary}));
@@ -32,7 +32,7 @@ const server = http.createServer(async (req, res) => {
       const routes = {
         '/web/session': {user: admin ? administrator : alice, owner_id: admin ? 'admin' : 'alice', csrf_token: admin ? 'csrf-admin' : 'csrf-alice', expires_at: '2099-01-01T00:00:00Z'},
         '/v1/profile': profile(admin), '/v1/clusters': clusters(), '/v1/sessions': sessionRows(), '/v1/pats': state.pats,
-        '/v1/admin/settings': {default_max_bookings: state.defaultLimit}, '/v1/admin/developers': [profile(false), profile(true)], '/v1/admin/audit': [],
+        '/v1/admin/settings': {default_max_bookings: state.defaultLimit, inactivity_grace_period: state.inactivityGrace}, '/v1/admin/developers': [profile(false), profile(true)], '/v1/admin/audit': [],
       };
       if (url.pathname.startsWith('/v1/admin/') && !admin) { reply(res, 403, {error: 'administrator required'}); return; }
       if (Object.hasOwn(routes, url.pathname)) { reply(res, 200, routes[url.pathname]); return; }
@@ -48,6 +48,12 @@ const server = http.createServer(async (req, res) => {
       state.primary = null; state.version++; state.signedOut = true;
       reply(res, 200, {status: 'signed out; bookings released; PATs preserved'}); return;
     }
+    if (url.pathname === '/v1/activity' && req.method === 'POST') {
+      assert.deepEqual(Object.keys(body).sort(), ['selection_version', 'session_id']);
+      if (admin || body.session_id !== state.primary || body.selection_version !== state.version) { reply(res, 409, {error: 'primary selection changed'}); return; }
+      const selected = primary(); selected.last_activity_at = new Date().toISOString(); selected.expires_at = new Date(Date.now() + 4 * 3600000).toISOString();
+      reply(res, 200, selected); return;
+    }
     if (url.pathname === '/v1/primary') {
       const selection = state.sessions.find(s => s.cluster === body.cluster && s.state === 'ACTIVE'); assert.ok(selection);
       state.primary = selection.id; state.version++; reply(res, 200, profile(admin)); return;
@@ -58,7 +64,7 @@ const server = http.createServer(async (req, res) => {
       reply(res, 200, {status: 'released'}); return;
     }
     if (url.pathname === '/v1/sessions' && req.method === 'POST') {
-      assert.ok(profile(admin).active_bookings < profile(admin).max_bookings); assert.ok(req.headers['idempotency-key']);
+      assert.ok(profile(admin).active_bookings < profile(admin).max_bookings); assert.ok(req.headers['idempotency-key']); assert.equal(Object.hasOwn(body, 'ttl'), false, 'booking duration is retired');
       const booked = {id: `s-booked-${++state.serial}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', cluster: body.cluster || 'c', state: 'ACTIVE', created_at: '2026-01-01T00:00:00Z'};
       state.sessions.push(booked); if (!primary()) {state.primary = booked.id; state.version++;} reply(res, 201, {...booked, primary: booked.id === state.primary}); return;
     }
@@ -67,7 +73,7 @@ const server = http.createServer(async (req, res) => {
       const pat = {id: 'p-fixture', owner: 'alice', name: body.name, scope: 'kubernetes:primary', created_at: '2026-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z'}; state.pats.push(pat);
       reply(res, 201, {pat, kubeconfig: 'apiVersion: v1\nkind: Config\nclusters:\n- name: gateway\n  cluster:\n    server: https://gateway.example.test/k8s\nusers:\n- name: personal\n  user:\n    token: dcpat_UI_FIXTURE_ONLY\n'}); return;
     }
-    if (url.pathname === '/v1/admin/settings' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.defaultLimit = body.default_max_bookings; reply(res, 200, {status: 'updated'}); return; }
+    if (url.pathname === '/v1/admin/settings' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.defaultLimit = body.default_max_bookings; state.inactivityGrace = body.inactivity_grace_period; reply(res, 200, {status: 'updated'}); return; }
     if (url.pathname === '/v1/admin/developers/alice' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.override = body.max_bookings; reply(res, 200, {status: 'updated'}); return; }
     reply(res, 404, {error: 'fixture route not implemented'});
   } catch (error) { console.error('UI fixture assertion:', error.message); reply(res, 500, {error: 'UI fixture assertion failed'}); }
@@ -78,13 +84,41 @@ const server = http.createServer(async (req, res) => {
   try {
     const context = await browser.newContext({acceptDownloads: true}); const page = await context.newPage(); const errors = [], dialogs = [];
     page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => { dialogs.push(dialog.message()); return dialog.accept(); });
+    await page.clock.install({time: new Date('2026-01-01T12:00:00Z')});
     await page.goto(origin, {waitUntil: 'domcontentloaded'}); await page.locator('#workspace').waitFor({state: 'visible'});
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster A'}).waitFor();
     assert.equal(await page.locator('#admin-nav').isVisible(), false); assert.equal(await page.locator('#identity img').count(), 0);
     assert.equal(await page.locator('#booking-submit').isDisabled(), true);
+    assert.equal(await page.locator('#booking-form [name=ttl]').count(), 0);
+    assert.equal(await page.getByRole('button', {name: 'Renew lease', exact: true}).count(), 0);
+    assert.equal(await page.locator('#pat-form [name=ttl]').count(), 1, 'PAT lifetime stays independent');
+    const activity = () => state.mutations.filter(r => r.path === '/v1/activity');
+    await page.clock.runFor(90000);
+    assert.equal(activity().length, 0, 'idle open tab must not renew a reservation');
+    await page.evaluate(async () => { await fetch('/v1/profile'); await fetch('/v1/sessions'); document.dispatchEvent(new KeyboardEvent('keydown', {key: 'x'})); });
+    await page.clock.runFor(1000);
+    assert.equal(activity().length, 0, 'polling and synthetic input must not count as presence');
+    const bDeadline = state.sessions.find(s => s.id === 's-b').expires_at;
+    await page.keyboard.press('ArrowRight'); await page.clock.runFor(5);
+    await page.waitForFunction(() => document.querySelector('.booking-last-activity').textContent !== 'No requests yet');
+    assert.deepEqual(activity().at(-1).body, {session_id: 's-a', selection_version: 1});
+    assert.equal(state.sessions.find(s => s.id === 's-b').expires_at, bDeadline, 'activity must not extend the other held cluster');
+    const firstCount = activity().length;
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.clock.runFor(15000);
+    assert.equal(activity().length, firstCount, 'interaction heartbeat must be throttled');
+    await page.clock.runFor(15000); await page.waitForTimeout(1);
+    assert.equal(activity().length, firstCount + 1, 'one pending real interaction gets one delayed send');
+    await page.clock.runFor(120000);
+    assert.equal(activity().length, firstCount + 1, 'a prior interaction must not renew itself indefinitely');
+    await page.evaluate(() => Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'hidden'}));
+    await page.keyboard.press('ArrowRight'); await page.clock.runFor(40000);
+    assert.equal(activity().length, firstCount + 1, 'hidden page input must not extend a booking');
+    await page.evaluate(() => delete document.visibilityState);
     await page.getByRole('button', {name: 'Make primary', exact: true}).click();
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster B'}).waitFor();
     assert.deepEqual(state.mutations.find(r => r.path === '/v1/primary').body, {cluster: 'b'});
+    await page.keyboard.press('ArrowRight'); await page.clock.runFor(30000); await page.waitForTimeout(1);
+    assert.deepEqual(activity().at(-1).body, {session_id: 's-b', selection_version: 2}, 'new activity follows only the current primary and selection version');
     await page.locator('#my-bookings article').filter({has: page.getByRole('heading', {name: 'Cluster B', exact: true})}).getByRole('button', {name: 'Stop', exact: true}).click();
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster A'}).waitFor();
     await page.waitForFunction(() => !document.querySelector('#booking-submit').disabled);
@@ -105,8 +139,10 @@ const server = http.createServer(async (req, res) => {
     const adminContext = await browser.newContext({extraHTTPHeaders: {'X-UI-Test-Role': 'admin'}}); const adminPage = await adminContext.newPage(); adminPage.on('dialog', dialog => dialog.accept());
     await adminPage.goto(origin, {waitUntil: 'domcontentloaded'}); await adminPage.locator('#workspace').waitFor({state: 'visible'});
     await adminPage.getByRole('button', {name: 'Administration', exact: false}).click(); await adminPage.locator('#developer-list table').waitFor();
-    await adminPage.locator('#default-booking-limit').fill('3'); await adminPage.locator('#settings-form input[name=reason]').fill('UI policy test'); await adminPage.locator('#settings-form button').click();
+    await adminPage.locator('#inactivity-grace-period').fill('2h'); await adminPage.locator('#default-booking-limit').fill('3'); await adminPage.locator('#settings-form input[name=reason]').fill('UI policy test'); await adminPage.locator('#settings-form button').click();
     await adminPage.waitForFunction(() => document.querySelector('#default-booking-limit').value === '3');
+    assert.equal(state.inactivityGrace, '2h');
+    assert.deepEqual(state.mutations.find(r => r.path === '/v1/admin/settings').body, {default_max_bookings: 3, inactivity_grace_period: '2h', reason: 'UI policy test'});
     let row = adminPage.locator('#developer-list tbody tr').first(); await row.locator('input[name=max_bookings]').fill('4'); await row.locator('input[name=reason]').fill('UI override test'); await row.getByRole('button', {name: 'Save limit'}).click();
     await adminPage.getByRole('cell', {name: '1 / 4', exact: true}).waitFor();
     row = adminPage.locator('#developer-list tbody tr').first(); await row.locator('input[name=max_bookings]').fill(''); await row.locator('input[name=reason]').fill('UI inherit test'); await row.getByRole('button', {name: 'Save limit'}).click();
@@ -121,8 +157,9 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(state.pats, beforeLogoutPATs, 'sign-out must not revoke or extend PATs');
     assert.equal(state.mutations.filter(r => r.method === 'DELETE').length, beforeLogoutDeletes, 'sign-out must not call PAT revocation');
     assert.equal(state.mutations.at(-1).path, '/auth/logout');
+    const afterLogoutActivity = activity().length; await page.clock.runFor(90000); assert.equal(activity().length, afterLogoutActivity, 'logout clears pending presence');
     assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 0);
     assert.deepEqual(errors, []); await context.close();
-    console.log('Primary UI contracts passed: limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
+    console.log('Primary UI contracts passed: per-cluster interaction heartbeat, idle/hidden/polling guards, throttling, inactivity policy, retired booking duration/renewal, limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => {console.error(error.stack); server.close(); process.exitCode = 1;});

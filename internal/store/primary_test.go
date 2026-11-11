@@ -45,7 +45,7 @@ func TestPrimarySelectionLimitsAndSafePromotion(t *testing.T) {
 		t.Fatal("idempotent retry blocked by limit", err)
 	}
 	allowBookings(t, s, u, 2)
-	b, _, err := s.Book(ctx, u, model.Booking{Cluster: "b", TTL: "1h"}, "b")
+	b, _, err := s.Book(ctx, u, model.Booking{Cluster: "b"}, "b")
 	if err != nil || b.Primary {
 		t.Fatal("additional booking changed primary", err)
 	}
@@ -91,7 +91,7 @@ func TestPrimarySelectionLimitsAndSafePromotion(t *testing.T) {
 	if _, _, err = s.Primary(ctx, u); !errors.Is(err, store.ErrNoPrimary) {
 		t.Fatal("no-booking error missing", err)
 	}
-	c, _, err := s.Book(ctx, u, model.Booking{Cluster: "c", TTL: "1m"}, "c")
+	c, _, err := s.Book(ctx, u, model.Booking{Cluster: "c"}, "c")
 	if err != nil || !c.Primary {
 		t.Fatal("new first booking not primary", err)
 	}
@@ -215,7 +215,7 @@ func TestPrimaryAuthorizationLeaseAndActivity(t *testing.T) {
 	u := identity("alice")
 	u.TokenExpiresAt = time.Now().UTC().Add(30 * time.Minute).Truncate(time.Microsecond)
 	allowBookings(t, s, u, 2)
-	a, _, err := s.Book(ctx, u, model.Booking{Cluster: "a", TTL: "1h"}, "a")
+	a, _, err := s.Book(ctx, u, model.Booking{Cluster: "a"}, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,14 +237,14 @@ func TestPrimaryAuthorizationLeaseAndActivity(t *testing.T) {
 	if _, err = s.HeartbeatPrimary(ctx, u); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("heartbeat without activity accepted", err)
 	}
-	if err = s.TouchActivity(ctx, u, a.ID); err != nil {
+	if _, err = s.RecordPrimaryActivity(ctx, u, a.ID, authorized.SelectionVersion); err != nil {
 		t.Fatal(err)
 	}
 	fresh := u
-	fresh.TokenExpiresAt = time.Now().UTC().Add(2 * time.Hour)
+	fresh.TokenExpiresAt = time.Now().UTC().Add(8 * time.Hour)
 	heartbeat, err := s.HeartbeatPrimary(ctx, fresh)
-	if err != nil || !heartbeat.AuthorizationExpiresAt.Equal(*a.ExpiresAt) {
-		t.Fatal("booking expiry cap missing", err)
+	if err != nil || !heartbeat.AuthorizationExpiresAt.Equal(fresh.TokenExpiresAt) {
+		t.Fatal("moving inactivity deadline incorrectly capped verified JWT lifetime", err)
 	}
 	activity := *heartbeat.Session.LastActivityAt
 	again, err := s.HeartbeatPrimary(ctx, fresh)
@@ -264,8 +264,8 @@ func TestPrimaryAuthorizationLeaseAndActivity(t *testing.T) {
 	if err != nil || !newAccess.AuthorizationExpiresAt.IsZero() {
 		t.Fatal("old lease transferred to new cluster", err)
 	}
-	if _, err = s.HeartbeatPrimary(ctx, fresh); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("old primary activity renewed new primary", err)
+	if _, err = s.HeartbeatPrimary(ctx, fresh); err != nil {
+		t.Fatal("explicit primary selection did not count user activity", err)
 	}
 	if _, err = s.AuthorizePrimary(ctx, fresh); err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestNoPrimaryResponseCommitsExpiry(t *testing.T) {
 			s, _ := testutil.Database(t)
 			register(t, s, "a")
 			u := identity("alice")
-			a, _, err := s.Book(ctx, u, model.Booking{TTL: "1m"}, "a")
+			a, _, err := s.Book(ctx, u, model.Booking{}, "a")
 			if err != nil {
 				t.Fatal(err)
 			}

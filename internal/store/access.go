@@ -51,9 +51,8 @@ func (t *Tx) primaryAccess(ctx context.Context, u model.Identity, authorize, hea
 	if u.TokenExpiresAt.After(out.AuthorizationExpiresAt) {
 		out.AuthorizationExpiresAt = u.TokenExpiresAt.UTC()
 	}
-	if end := out.Session.ExpiresAt; end != nil && end.Before(out.AuthorizationExpiresAt) {
-		out.AuthorizationExpiresAt = end.UTC()
-	}
+	// Authentication validity is independent of a booking's moving inactivity
+	// deadline. Gateway checks enforce both on each request and during streams.
 	_, err = t.Exec(ctx, "UPDATE developers SET authorization_expires_at=$2,authorization_version=$3 WHERE owner_id=$1", u.Key(), out.AuthorizationExpiresAt, out.SelectionVersion)
 	return out, err
 }
@@ -102,10 +101,72 @@ func (s *Store) CheckGatewayAuthorization(ctx context.Context, u model.Identity,
 	return nil
 }
 
-func (s *Store) TouchActivity(ctx context.Context, u model.Identity, sessionID string) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE sessions SET last_activity_at=clock_timestamp()
- WHERE id=$1 AND owner_id=$2 AND state='ACTIVE'
- AND (expires_at IS NULL OR expires_at>clock_timestamp())
- AND (last_activity_at IS NULL OR last_activity_at<clock_timestamp()-interval '30 seconds')`, sessionID, u.Key())
-	return err
+const ActivityThrottle = 15 * time.Second
+
+func (t *Tx) inactivityGrace(ctx context.Context) (time.Duration, error) {
+	var seconds int64
+	err := t.QueryRow(ctx, "SELECT inactivity_grace_seconds FROM application_settings WHERE singleton").Scan(&seconds)
+	return time.Duration(seconds) * time.Second, err
+}
+
+// recordPrimaryActivity is called only for authenticated, real activity. It must
+// run under update's database lock, which serializes it with release and expiry.
+// The exact selection version prevents stale tabs or streams from keeping a
+// different booking alive after the developer switches clusters.
+func (t *Tx) recordPrimaryActivity(ctx context.Context, u model.Identity, sessionID string, version int64) (model.Session, error) {
+	session, currentVersion, err := t.primary(ctx, u)
+	if errors.Is(err, ErrNoPrimary) {
+		return model.Session{}, ErrConflict
+	}
+	if err != nil {
+		return model.Session{}, err
+	}
+	if session.ID != sessionID || currentVersion != version || session.Owner != u.Key() {
+		return model.Session{}, ErrConflict
+	}
+	now, err := t.now(ctx)
+	if err != nil {
+		return model.Session{}, err
+	}
+	if session.ExpiresAt == nil || !session.ExpiresAt.After(now) {
+		return model.Session{}, ErrConflict
+	}
+	if session.LastActivityAt != nil && now.Sub(*session.LastActivityAt) < ActivityThrottle {
+		return session, nil
+	}
+	grace, err := t.inactivityGrace(ctx)
+	if err != nil {
+		return model.Session{}, err
+	}
+	deadline := now.Add(grace)
+	result, err := t.Exec(ctx, `UPDATE sessions SET last_activity_at=$2,expires_at=$3
+ WHERE id=$1 AND state='ACTIVE' AND expires_at>clock_timestamp()`, session.ID, now, deadline)
+	if err != nil {
+		return model.Session{}, err
+	}
+	if result.RowsAffected() != 1 {
+		return model.Session{}, ErrConflict
+	}
+	session.LastActivityAt, session.ExpiresAt = &now, &deadline
+	return session, nil
+}
+
+func (s *Store) RecordPrimaryActivity(ctx context.Context, u model.Identity, sessionID string, version int64) (model.Session, error) {
+	var session model.Session
+	var resultErr error
+	err := s.update(ctx, func(t *Tx) error {
+		if err := t.expire(ctx); err != nil {
+			return err
+		}
+		session, resultErr = t.recordPrimaryActivity(ctx, u, sessionID, version)
+		if errors.Is(resultErr, ErrConflict) {
+			// Persist expiry/primary repair even when a stale heartbeat fails.
+			return t.expire(ctx)
+		}
+		return resultErr
+	})
+	if err == nil {
+		err = resultErr
+	}
+	return session, err
 }

@@ -207,13 +207,13 @@ func TestStablePrimaryKubectlWorkflow(t *testing.T) {
 	if err != nil || len(sessions) != 0 {
 		t.Fatal("kubectl silently allocated a cluster")
 	}
-	a := session(t, env.run(alice, "start", "--cluster", "alpha", "--ttl", "1h"))
+	a := session(t, env.run(alice, "start", "--cluster", "alpha"))
 	if raw := env.primaryKubectl(alice, path, "get", "--raw=/version"); !bytes.Contains(raw, []byte("alpha")) {
 		t.Fatal("first booking was not primary")
 	}
 	env.reject(alice, 4, "start", "--cluster", "beta")
 	env.run(admin, "admin", "settings", "--max-bookings", "2", "--reason", "primary workflow test")
-	b := session(t, env.run(alice, "start", "--cluster", "beta", "--ttl", "1h"))
+	b := session(t, env.run(alice, "start", "--cluster", "beta"))
 	if raw := env.primaryKubectl(alice, path, "get", "--raw=/version"); !bytes.Contains(raw, []byte("alpha")) {
 		t.Fatal("second booking changed primary")
 	}
@@ -263,8 +263,9 @@ func TestStablePrimaryKubectlWorkflow(t *testing.T) {
 	oldAccess, oldRefresh := token["access_token"], token["refresh_token"]
 	var before time.Time
 	var activity *time.Time
-	query := `SELECT d.authorization_expires_at,s.last_activity_at FROM developers d JOIN sessions s ON s.id=d.primary_session_id WHERE d.owner_id=$1`
-	if err = database.Pool.QueryRow(t.Context(), query, identity.Key()).Scan(&before, &activity); err != nil {
+	var beforeIdleDeadline, afterIdleDeadline time.Time
+	query := `SELECT d.authorization_expires_at,s.last_activity_at,s.expires_at FROM developers d JOIN sessions s ON s.id=d.primary_session_id WHERE d.owner_id=$1`
+	if err = database.Pool.QueryRow(t.Context(), query, identity.Key()).Scan(&before, &activity, &beforeIdleDeadline); err != nil {
 		t.Fatal(err)
 	}
 	token["expiry"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
@@ -280,7 +281,7 @@ func TestStablePrimaryKubectlWorkflow(t *testing.T) {
 	var afterActivity *time.Time
 	deadline := time.Now().Add(22 * time.Second)
 	for time.Now().Before(deadline) {
-		if err = database.Pool.QueryRow(t.Context(), query, identity.Key()).Scan(&after, &afterActivity); err != nil {
+		if err = database.Pool.QueryRow(t.Context(), query, identity.Key()).Scan(&after, &afterActivity, &afterIdleDeadline); err != nil {
 			t.Fatal(err)
 		}
 		if after.After(before) {
@@ -288,7 +289,7 @@ func TestStablePrimaryKubectlWorkflow(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !after.After(before) || activity == nil || afterActivity == nil || !activity.Equal(*afterActivity) {
+	if !after.After(before) || activity == nil || afterActivity == nil || !activity.Equal(*afterActivity) || !afterIdleDeadline.Equal(beforeIdleDeadline) {
 		t.Fatal("detached renewal failed or counted its own activity")
 	}
 	tokenJSON, _ = os.ReadFile(files[0])

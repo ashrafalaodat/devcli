@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 var ctx = context.Background()
@@ -154,7 +153,7 @@ func TestExpiryMaintenanceAndAutomaticFallback(t *testing.T) {
 	s, _ := testutil.Database(t)
 	register(t, s, "a")
 	register(t, s, "b")
-	a, _, e := s.Book(ctx, identity("a"), model.Booking{TTL: "1m"}, "a")
+	a, _, e := s.Book(ctx, identity("a"), model.Booking{}, "a")
 	if e != nil || a.Cluster != "a" {
 		t.Fatal(a, e)
 	}
@@ -188,8 +187,8 @@ func TestExpiryMaintenanceAndAutomaticFallback(t *testing.T) {
 	if _, _, e = s.Book(ctx, identity("c"), model.Booking{Selector: map[string]string{"type": "test"}}, "c"); e != nil {
 		t.Fatal(e)
 	}
-	if e = s.Renew(ctx, identity("b"), b.ID, time.Hour); e == nil {
-		t.Fatal("renewing no-expiry lease should explain unnecessary")
+	if b.ExpiresAt == nil {
+		t.Fatal("booking missing inactivity release deadline")
 	}
 }
 func TestConcurrentSharedLimit(t *testing.T) {

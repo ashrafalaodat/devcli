@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"devctl.local/devctl/internal/model"
 	"github.com/jackc/pgx/v5"
@@ -167,7 +168,9 @@ func (s *Store) Settings(ctx context.Context, u model.Identity) (model.Settings,
 	if !u.Admin {
 		return v, ErrForbidden
 	}
-	err := s.Pool.QueryRow(ctx, "SELECT default_max_bookings FROM application_settings WHERE singleton").Scan(&v.DefaultMaxBookings)
+	var seconds int
+	err := s.Pool.QueryRow(ctx, "SELECT default_max_bookings,inactivity_grace_seconds FROM application_settings WHERE singleton").Scan(&v.DefaultMaxBookings, &seconds)
+	v.InactivityGracePeriod = (time.Duration(seconds) * time.Second).String()
 	return v, err
 }
 
@@ -182,17 +185,56 @@ func validLimitReason(max int, reason string) error {
 }
 
 func (s *Store) UpdateSettings(ctx context.Context, admin model.Identity, max int, reason string) error {
+	return s.UpdateReservationPolicy(ctx, admin, &max, nil, reason)
+}
+
+// UpdateReservationPolicy applies partial patches under the same durable lock as
+// booking, activity and expiry. Omitted settings cannot overwrite concurrent edits.
+func (s *Store) UpdateReservationPolicy(ctx context.Context, admin model.Identity, max *int, grace *time.Duration, reason string) error {
 	if !admin.Admin {
 		return ErrForbidden
 	}
-	if err := validLimitReason(max, reason); err != nil {
+	value := 1
+	if max != nil {
+		value = *max
+	}
+	if err := validLimitReason(value, reason); err != nil {
 		return err
 	}
+	if max == nil && grace == nil {
+		return fmt.Errorf("%w: supply a booking limit or inactivity grace period", ErrConflict)
+	}
+	if grace != nil && (*grace < time.Minute || *grace > 168*time.Hour || *grace%time.Second != 0) {
+		return fmt.Errorf("%w: inactivity grace period must be whole seconds between 1m and 168h", ErrConflict)
+	}
 	return s.update(ctx, func(t *Tx) error {
-		if _, err := t.Exec(ctx, "UPDATE application_settings SET default_max_bookings=$1 WHERE singleton", max); err != nil {
+		// Expire against the current policy first. A larger grace period must
+		// never resurrect a booking whose inactivity deadline already passed.
+		if err := t.expire(ctx); err != nil {
 			return err
 		}
-		return t.audit(ctx, admin.Key(), "booking_default_limit", "settings", fmt.Sprintf("default maximum bookings set to %d; existing bookings retained; reason: %s", max, reason))
+		if max != nil {
+			if _, err := t.Exec(ctx, "UPDATE application_settings SET default_max_bookings=$1 WHERE singleton", *max); err != nil {
+				return err
+			}
+			if err := t.audit(ctx, admin.Key(), "booking_default_limit", "settings", fmt.Sprintf("default maximum bookings set to %d; existing bookings retained; reason: %s", *max, reason)); err != nil {
+				return err
+			}
+		}
+		if grace != nil {
+			seconds := int64(*grace / time.Second)
+			if _, err := t.Exec(ctx, "UPDATE application_settings SET inactivity_grace_seconds=$1 WHERE singleton", seconds); err != nil {
+				return err
+			}
+			if _, err := t.Exec(ctx, `UPDATE sessions SET expires_at=GREATEST(created_at,idle_anchor_at,last_activity_at)+make_interval(secs=>$1) WHERE state='ACTIVE'`, seconds); err != nil {
+				return err
+			}
+			if err := t.audit(ctx, admin.Key(), "inactivity_grace_period", "settings", fmt.Sprintf("inactivity grace period set to %s for current and future bookings; reason: %s", grace.String(), reason)); err != nil {
+				return err
+			}
+			return t.expire(ctx)
+		}
+		return nil
 	})
 }
 
@@ -253,6 +295,12 @@ func (s *Store) SelectPrimary(ctx context.Context, u model.Identity, target stri
 			}
 		}
 		out, err = t.profile(ctx, u)
+		if err == nil {
+			_, err = t.recordPrimaryActivity(ctx, u, id, out.SelectionVersion)
+		}
+		if err == nil {
+			out, err = t.profile(ctx, u)
+		}
 		return err
 	})
 	return out, err
@@ -304,6 +352,10 @@ func (s *Store) PrimaryConfig(ctx context.Context, u model.Identity) (model.Sess
 		if errors.Is(resultErr, ErrNoPrimary) {
 			return nil
 		}
+		if resultErr != nil {
+			return resultErr
+		}
+		session, resultErr = t.recordPrimaryActivity(ctx, u, session.ID, version)
 		if resultErr != nil {
 			return resultErr
 		}

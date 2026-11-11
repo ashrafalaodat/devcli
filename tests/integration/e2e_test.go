@@ -286,7 +286,7 @@ func TestEndToEnd(t *testing.T) {
 	env.run(alice, "share", a.ID)
 	b = session(t, env.run(bob, "start", "--cluster", "alpha"))
 	env.reject(bob, 4, "share", b.ID, "--off")
-	raw := env.run(bob, "status", b.ID)
+	raw := env.run(bob, "status", b.ID, "--json")
 	var detail struct {
 		Cluster model.Cluster `json:"cluster"`
 	}
@@ -397,7 +397,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	env.reject(alice, 3, "whoami")
 	env.login(alice, "alice", true)
-	raw = env.run(bob, "status", b.ID)
+	raw = env.run(bob, "status", b.ID, "--json")
 	json.Unmarshal(raw, &detail)
 	if detail.Cluster.ControllerSession != b.ID || detail.Cluster.Shareable {
 		t.Fatal("controller promotion after logout failed")
@@ -410,9 +410,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal("upstream secret escaped into local metadata")
 	}
 	t.Log("exclusive conflicts, sharing consent, gateway ownership, secret-free config, real kubectl apply/logs/exec/port-forward/watch, child environment, refresh, logout, and restart passed")
-	// An optional expiry is enforced server-side without a running CLI.
-	exp := session(t, env.run(alice, "start", "--cluster", "alpha", "--ttl", "1m"))
-	env.run(alice, "renew", exp.ID, "--ttl", "2m")
+	// Inactivity release is enforced server-side without a running CLI.
+	exp := session(t, env.run(alice, "start", "--cluster", "alpha"))
 	expiryToken := pluginToken(t, env.run(alice, "credential"))
 	if _, err = database.Pool.Exec(context.Background(), "UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", exp.ID); err != nil {
 		t.Fatal(err)

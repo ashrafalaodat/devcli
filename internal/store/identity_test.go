@@ -6,7 +6,6 @@ import (
 	"devctl.local/devctl/internal/testutil"
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestSessionOwnershipUsesIssuerAndSubject(t *testing.T) {
@@ -14,7 +13,7 @@ func TestSessionOwnershipUsesIssuerAndSubject(t *testing.T) {
 	register(t, s, "a")
 	owner := identity("alice")
 	owner.Subject = "original-alice-subject"
-	session, _, err := s.Book(ctx, owner, model.Booking{Cluster: "a", TTL: "1h"}, "owner-booking")
+	session, _, err := s.Book(ctx, owner, model.Booking{Cluster: "a"}, "owner-booking")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +40,7 @@ func TestSessionOwnershipUsesIssuerAndSubject(t *testing.T) {
 				{"stop", func() error { return s.Stop(ctx, test.user, session.ID, "unauthorized stop", false) }},
 				{"force_stop_without_admin", func() error { return s.Stop(ctx, test.user, session.ID, "unauthorized force", true) }},
 				{"share", func() error { return s.Share(ctx, test.user, session.ID, true) }},
-				{"renew", func() error { return s.Renew(ctx, test.user, session.ID, 2*time.Hour) }},
+				{"primary", func() error { _, err := s.SelectPrimary(ctx, test.user, session.ID); return err }},
 				{"access", func() error { return s.Access(ctx, test.user, session.ID) }},
 			} {
 				t.Run(operation.name, func(t *testing.T) {
