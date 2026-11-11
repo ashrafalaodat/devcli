@@ -281,7 +281,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal("automatic fallback failed")
 	}
 	env.reject(alice, 4, "start", "--idempotency-key", "full")
-	env.reject(bob, 3, "kubeconfig", a.ID)
 	env.reject(bob, 3, "share", a.ID)
 	env.run(bob, "stop", b.ID)
 	env.run(alice, "share", a.ID)
@@ -297,7 +296,7 @@ func TestEndToEnd(t *testing.T) {
 	if detail.Cluster.Participants[0].DisplayName == "" || detail.Cluster.Participants[0].Email == "" {
 		t.Fatal("co-user contact missing")
 	}
-	path := strings.TrimSpace(string(env.run(alice, "kubeconfig", a.ID)))
+	path := strings.TrimSpace(string(env.run(alice, "kubeconfig")))
 	if strings.Contains(path, "\n") {
 		t.Fatal("kubeconfig stdout polluted")
 	}
@@ -305,13 +304,11 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal("gateway kubeconfig delivery failed", err)
 	}
-	if bytes.Contains(saved, []byte(upstreamToken)) || bytes.Contains(saved, []byte(upstream.Server.URL)) || bytes.Contains(saved, []byte("client-key-data")) || !bytes.Contains(saved, []byte("exec:")) || !bytes.Contains(saved, []byte(env.api+"/k8s/sessions/"+a.ID)) {
+	if bytes.Contains(saved, []byte(upstreamToken)) || bytes.Contains(saved, []byte(upstream.Server.URL)) || bytes.Contains(saved, []byte("client-key-data")) || !bytes.Contains(saved, []byte("exec:")) || !bytes.Contains(saved, []byte(env.api+"/k8s")) {
 		t.Fatal("generated kubeconfig must contain only gateway metadata and the exec plugin")
 	}
-	aliceGatewayToken := pluginToken(t, env.run(alice, "credential", "--session", a.ID))
-	bobGatewayToken := pluginToken(t, env.run(bob, "credential", "--session", b.ID))
-	env.reject(bob, 3, "credential", "--session", a.ID)
-	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/sessions/"+a.ID+"/version", bobGatewayToken)
+	aliceGatewayToken := pluginToken(t, env.run(alice, "credential"))
+	bobGatewayToken := pluginToken(t, env.run(bob, "credential"))
 	if output := runKubectl(t, path, "get", "--raw=/version"); !bytes.Contains(output, []byte("v1.35.1-fixture")) {
 		t.Fatal("kubectl version response not forwarded")
 	}
@@ -353,7 +350,7 @@ func TestEndToEnd(t *testing.T) {
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("kubeconfig not private")
 	}
-	child := strings.TrimSpace(string(env.run(alice, "exec", a.ID, "--", "sh", "-c", "printf '%s' \"$KUBECONFIG\"")))
+	child := strings.TrimSpace(string(env.run(alice, "exec", "--", "sh", "-c", "printf '%s' \"$KUBECONFIG\"")))
 	if child != path {
 		t.Fatal("exec did not set session KUBECONFIG")
 	}
@@ -389,7 +386,7 @@ func TestEndToEnd(t *testing.T) {
 	json.Unmarshal(tokenJSON, &freshToken)
 	refresh, _ := freshToken["refresh_token"].(string)
 	env.run(alice, "logout")
-	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/sessions/"+a.ID+"/version", aliceGatewayToken)
+	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s"+"/version", aliceGatewayToken)
 	revoked, err := http.PostForm(issuer+"/protocol/openid-connect/token", url.Values{"grant_type": {"refresh_token"}, "client_id": {"devctl-cli"}, "refresh_token": {refresh}})
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +397,6 @@ func TestEndToEnd(t *testing.T) {
 	}
 	env.reject(alice, 3, "whoami")
 	env.login(alice, "alice", true)
-	env.reject(alice, 4, "kubeconfig", a.ID)
 	raw = env.run(bob, "status", b.ID)
 	json.Unmarshal(raw, &detail)
 	if detail.Cluster.ControllerSession != b.ID || detail.Cluster.Shareable {
@@ -408,8 +404,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	env.run(bob, "share", b.ID)
 	env.run(bob, "stop", b.ID)
-	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/sessions/"+b.ID+"/version", bobGatewayToken)
-	env.reject(bob, 4, "kubeconfig", b.ID)
+	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/version", bobGatewayToken)
 	// The previously generated file is harmless without an active booking.
 	if bytes.Contains(saved, []byte(upstreamToken)) {
 		t.Fatal("upstream secret escaped into local metadata")
@@ -418,7 +413,7 @@ func TestEndToEnd(t *testing.T) {
 	// An optional expiry is enforced server-side without a running CLI.
 	exp := session(t, env.run(alice, "start", "--cluster", "alpha", "--ttl", "1m"))
 	env.run(alice, "renew", exp.ID, "--ttl", "2m")
-	expiryToken := pluginToken(t, env.run(alice, "credential", "--session", exp.ID))
+	expiryToken := pluginToken(t, env.run(alice, "credential"))
 	if _, err = database.Pool.Exec(context.Background(), "UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", exp.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -439,8 +434,7 @@ func TestEndToEnd(t *testing.T) {
 	if expiredState != "EXPIRED" {
 		t.Fatal("background expiry did not run")
 	}
-	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/sessions/"+exp.ID+"/version", expiryToken)
-	env.reject(alice, 4, "kubeconfig", exp.ID)
+	assertGatewayDenied(t, env.gatewayClient(), env.api+"/k8s/version", expiryToken)
 	env.run(alice, "logout")
 	env.run(bob, "logout")
 	env.run(admin, "logout")

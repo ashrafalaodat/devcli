@@ -35,20 +35,10 @@ func TestPrivateFilesAndSessionPaths(t *testing.T) {
 		t.Fatal(e)
 	}
 	c := &Client{Login: s}
-	for _, id := range []string{"../../escape", "s-../../bad", "anything"} {
-		if _, e = c.configPath(id); e == nil {
-			t.Fatal("unsafe session filename")
-		}
-	}
-	id := "s-12345678-1234-1234-1234-123456789abc"
-	p, e := c.configPath(id)
-	if e != nil {
+	if e = atomicPrivate(c.activePath(), []byte("private")); e != nil {
 		t.Fatal(e)
 	}
-	if e = atomicPrivate(p, []byte("secret")); e != nil {
-		t.Fatal(e)
-	}
-	info, _ = os.Stat(p)
+	info, _ = os.Stat(c.activePath())
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("kubeconfig mode")
 	}

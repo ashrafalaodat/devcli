@@ -50,4 +50,4 @@ else
   echo 'For this Bash/Zsh terminal, run:'
   printf 'export KUBECONFIG=%q\n' "$active_config"
 fi
-echo 'Use kubectl devctl login for an explicit login, or run kubectl to log in on first interactive use.'
+echo 'Use kubectl devctl login to authenticate. Book a cluster using the web UI or full devctl CLI; this plugin does not book automatically.'

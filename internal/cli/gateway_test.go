@@ -3,22 +3,23 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"devctl.local/devctl/internal/auth"
+	"devctl.local/devctl/internal/model"
 	"encoding/json"
-	"errors"
+	"encoding/pem"
+	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 	"io"
+	"k8s.io/client-go/tools/clientcmd"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"devctl.local/devctl/internal/auth"
-	"golang.org/x/oauth2"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const sessionA = "s-12345678-1234-1234-1234-123456789abc"
@@ -42,152 +43,6 @@ func testGatewayClient(t *testing.T, handler http.HandlerFunc) (*Client, *bytes.
 	out := new(bytes.Buffer)
 	return &Client{URL: server.URL, Login: store, HTTP: server.Client(), Out: out, Err: io.Discard}, out
 }
-func metadataHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer devctl-api-token-sentinel" {
-		http.Error(w, "not authenticated", 401)
-		return
-	}
-	if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/connection") {
-		http.Error(w, "wrong endpoint", 404)
-		return
-	}
-	json.NewEncoder(w).Encode(Connection{Server: "https://gateway.example.test/k8s/sessions/" + strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/connection")})
-}
-
-func TestGatewayKubeconfigContainsNoCredentialsAndPreservesProfile(t *testing.T) {
-	c, _ := testGatewayClient(t, metadataHandler)
-	path, e := c.download(context.Background(), sessionA)
-	if e != nil {
-		t.Fatal(e)
-	}
-	raw, e := os.ReadFile(path)
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, secret := range []string{"devctl-api-token-sentinel", "refresh-token-sentinel", "client-key-data:", "client-certificate-data:", "token:"} {
-		if bytes.Contains(raw, []byte(secret)) {
-			t.Fatalf("credential leaked to gateway kubeconfig: %s", secret)
-		}
-	}
-	cfg, e := clientcmd.Load(raw)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = clientcmd.Validate(*cfg); e != nil {
-		t.Fatal(e)
-	}
-	cluster := cfg.Clusters["devctl"]
-	if cluster.Server != "https://gateway.example.test/k8s/sessions/"+sessionA || cluster.InsecureSkipTLSVerify {
-		t.Fatal("wrong gateway endpoint or TLS", cluster.Server)
-	}
-	user := cfg.AuthInfos["devctl"]
-	if user.Exec == nil || user.Token != "" || len(user.ClientKeyData) > 0 {
-		t.Fatal("credential-bearing auth info")
-	}
-	if !filepath.IsAbs(user.Exec.Command) || user.Exec.APIVersion != "client.authentication.k8s.io/v1" || user.Exec.InteractiveMode != "Never" {
-		t.Fatal("exec plugin command not portable", user.Exec)
-	}
-	if strings.Join(user.Exec.Args, "|") != "--api|"+c.URL+"|credential|--session|"+sessionA {
-		t.Fatal("wrong plugin args", user.Exec.Args)
-	}
-	vars := map[string]string{}
-	for _, v := range user.Exec.Env {
-		vars[v.Name] = v.Value
-	}
-	if vars["DEVCTL_CONFIG_DIR"] != filepath.Dir(c.Login.Dir) || vars["DEVCTL_DEV_HTTP"] != "1" || vars["DEVCTL_DEV_TOKEN_FILE"] != "1" {
-		t.Fatal("profile not preserved", vars)
-	}
-	var settings auth.Config
-	if e = json.Unmarshal([]byte(vars["DEVCTL_OIDC_CONFIG"]), &settings); e != nil || settings.Issuer != c.Login.Config.Issuer {
-		t.Fatal("issuer profile missing", e)
-	}
-	info, e := os.Stat(path)
-	if e != nil || info.Mode().Perm() != 0600 {
-		t.Fatal("gateway config permissions", e)
-	}
-}
-
-func TestCredentialReturnsOnlyExpiringDevctlTokenAndRefusesEndedSession(t *testing.T) {
-	ended := false
-	c, out := testGatewayClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if ended {
-			w.WriteHeader(409)
-			json.NewEncoder(w).Encode(map[string]string{"error": "session ended"})
-			return
-		}
-		metadataHandler(w, r)
-	})
-	if e := c.credential(context.Background(), sessionA); e != nil {
-		t.Fatal(e)
-	}
-	var document struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
-		Status     struct {
-			Token      string    `json:"token"`
-			Expiration time.Time `json:"expirationTimestamp"`
-		} `json:"status"`
-	}
-	decoder := json.NewDecoder(out)
-	if e := decoder.Decode(&document); e != nil {
-		t.Fatal(e)
-	}
-	if e := decoder.Decode(new(any)); e != io.EOF {
-		t.Fatal("extra plugin stdout", e)
-	}
-	if document.APIVersion != "client.authentication.k8s.io/v1" || document.Kind != "ExecCredential" || document.Status.Token != "devctl-api-token-sentinel" || !document.Status.Expiration.After(time.Now()) {
-		t.Fatal("invalid exec credential")
-	}
-	out.Reset()
-	ended = true
-	e := c.credential(context.Background(), sessionA)
-	var exit *ExitError
-	if !errors.As(e, &exit) || exit.Code != 4 || out.Len() != 0 {
-		t.Fatal("ended session exposed credentials", e)
-	}
-	if e = c.Login.clear(); e != nil {
-		t.Fatal(e)
-	}
-	out.Reset()
-	e = c.credential(context.Background(), sessionA)
-	if !errors.As(e, &exit) || exit.Code != 3 || out.Len() != 0 {
-		t.Fatal("missing login exposed credentials", e)
-	}
-}
-
-func TestSelectionSwitchingAndLogoutFailClosed(t *testing.T) {
-	c, _ := testGatewayClient(t, metadataHandler)
-	if _, e := c.selectSession(context.Background(), sessionA); e != nil {
-		t.Fatal(e)
-	}
-	if _, e := c.selectSession(context.Background(), sessionB); e != nil {
-		t.Fatal(e)
-	}
-	if e := c.clearActive(context.Background(), sessionA); e != nil {
-		t.Fatal(e)
-	}
-	cfg, e := clientcmd.LoadFromFile(c.activePath())
-	if e != nil || cfg.CurrentContext != sessionB {
-		t.Fatal("stopping another session changed active selection", e)
-	}
-	if e = c.clearActive(context.Background(), sessionB); e != nil {
-		t.Fatal(e)
-	}
-	cfg, e = clientcmd.LoadFromFile(c.activePath())
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = clientcmd.Validate(*cfg); e == nil {
-		t.Fatal("inactive configuration unexpectedly usable")
-	}
-	if cfg.CurrentContext != "devctl-no-active-session" {
-		t.Fatal("wrong inactive context")
-	}
-	if _, e = os.Stat(c.activePath()); e != nil {
-		t.Fatal("active path removed, allowing unexpected fallback", e)
-	}
-}
-
 func TestShellInstallIsExplicitIdempotentAndQuotesPath(t *testing.T) {
 	t.Setenv("DEVCTL_CONFIG_DIR", filepath.Join(t.TempDir(), "profile's $(touch should-not-run)"))
 	t.Setenv("DEVCTL_DEV_HTTP", "1")
@@ -241,27 +96,6 @@ func TestShellInstallIsExplicitIdempotentAndQuotesPath(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsInsecureMetadata(t *testing.T) {
-	c, _ := testGatewayClient(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(Connection{Server: "http://untrusted.example.test"})
-	})
-	if _, e := c.download(context.Background(), sessionA); e == nil {
-		t.Fatal("insecure non-loopback gateway accepted")
-	}
-	if _, e := c.gatewayConfig(sessionA, Connection{Server: "https://gateway.example.test", CertificateAuthorityData: "not-base64"}); e == nil {
-		t.Fatal("malformed gateway CA accepted")
-	}
-	ca := base64.StdEncoding.EncodeToString([]byte("public-ca-data"))
-	raw, e := c.gatewayConfig(sessionA, Connection{Server: "https://gateway.example.test", CertificateAuthorityData: ca})
-	if e != nil {
-		t.Fatal(e)
-	}
-	cfg, e := clientcmd.Load(raw)
-	if e != nil || string(cfg.Clusters["devctl"].CertificateAuthorityData) != "public-ca-data" {
-		t.Fatal("gateway public CA not preserved", e)
-	}
-}
-
 func TestShellQuotingForFishAndZsh(t *testing.T) {
 	value := "a\\\\b' $(echo unsafe)"
 	if got := fishQuote(value); got != "'a\\\\\\\\b\\' $(echo unsafe)'" {
@@ -290,5 +124,181 @@ func TestShellQuotingForFishAndZsh(t *testing.T) {
 	raw, e := command.Output()
 	if e != nil || string(raw) != client.activePath() {
 		t.Fatal("zsh shell snippet did not preserve quoted path", e, string(raw))
+	}
+}
+
+func TestStableSetupIsOfflinePrivateAndReplacesRetiredBinding(t *testing.T) {
+	var requests atomic.Int32
+	c, _ := testAccessClient(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
+	legacy := filepath.Join(c.Login.Dir, "auto-binding.json")
+	if err := os.WriteFile(legacy, []byte(`{"binding":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := c.setupGateway(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := clientcmd.Load(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin := cfg.AuthInfos["devctl"].Exec
+	if cfg.Clusters["devctl"].Server != c.URL+"/k8s" || cfg.CurrentContext != "devctl" || plugin == nil || strings.Join(plugin.Args, "|") != "--api|"+c.URL+"|credential" || plugin.InteractiveMode != "IfAvailable" {
+		t.Fatal("config does not use stable developer gateway")
+	}
+	if bytes.Contains(first, []byte("/sessions/")) || bytes.Contains(first, []byte("--auto")) || bytes.Contains(first, []byte("--session")) || bytes.Contains(first, []byte("token:")) {
+		t.Fatal("retired route or credential persisted")
+	}
+	if _, err = os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatal("retired binding retained")
+	}
+	if _, err = c.setupGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(path)
+	if !bytes.Equal(first, second) || requests.Load() != 0 {
+		t.Fatal("setup changed selection or contacted backend")
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0600 {
+		t.Fatal("config not private")
+	}
+}
+
+func TestCredentialWithoutBookingAuthenticatesButNeverAllocates(t *testing.T) {
+	var requests atomic.Int32
+	identity := testAccessIdentity()
+	c, out := testAccessClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != "GET" || r.URL.Path != "/v1/profile" {
+			t.Error("credential allocated or mutated booking")
+			w.WriteHeader(400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(developerProfile{OwnerID: identity.Key(), User: identity, MaxBookings: 1})
+	})
+	saveAccessTestToken(t, c)
+	if err := c.credential(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Kind   string `json:"kind"`
+		Status struct {
+			Token  string    `json:"token"`
+			Expiry time.Time `json:"expirationTimestamp"`
+		} `json:"status"`
+	}
+	decoder := json.NewDecoder(out)
+	if err := decoder.Decode(&result); err != nil || decoder.Decode(new(any)) != io.EOF || result.Kind != "ExecCredential" || result.Status.Token != "automatic-access-sentinel" || !result.Status.Expiry.After(time.Now()) {
+		t.Fatal("invalid expiring credential", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatal("unexpected allocation request")
+	}
+	if err := c.Login.clear(); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := c.credential(context.Background()); err == nil || out.Len() != 0 {
+		t.Fatal("missing login emitted credential")
+	}
+	if requests.Load() != 1 {
+		t.Fatal("noninteractive missing login opened authentication")
+	}
+}
+
+func TestPrimarySwitchPreservesKubeconfigAndCallsServerOnly(t *testing.T) {
+	identity := testAccessIdentity()
+	var switches atomic.Int32
+	c, out := testAccessClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/primary" {
+			t.Error("unexpected request")
+			w.WriteHeader(400)
+			return
+		}
+		var body struct {
+			Cluster string `json:"cluster"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Cluster != "cluster-b" {
+			t.Error("wrong selected cluster")
+		}
+		switches.Add(1)
+		_ = json.NewEncoder(w).Encode(developerProfile{OwnerID: identity.Key(), User: identity, MaxBookings: 2, SelectionVersion: 2})
+	})
+	saveAccessTestToken(t, c)
+	path, err := c.setupGateway(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	root := &cobra.Command{Use: "devctl", SilenceErrors: true, SilenceUsage: true}
+	c.addGatewayCommands(root)
+	root.SetArgs([]string{"select", "cluster-b"})
+	if err = root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path)
+	if switches.Load() != 1 || !bytes.Equal(before, after) || !strings.Contains(out.String(), "selection_version") {
+		t.Fatal("switch changed config rather than server primary")
+	}
+}
+
+func TestPrimaryGatewayRefusesRetiredAndInsecureMetadata(t *testing.T) {
+	for _, server := range []string{"http://gateway.test/k8s", "https://gateway.test/k8s/sessions/" + sessionA, "https://gateway.test/k8s/auto/a-123", "https://gateway.test/k8s?target=evil", "https://user:password@gateway.test/k8s"} {
+		if err := validateConnection(Connection{Server: server}); err == nil {
+			t.Fatal("unsafe or retired connection accepted", server)
+		}
+	}
+	if err := validateConnection(Connection{Server: "https://gateway.test/k8s"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := testAccessClient(t, func(http.ResponseWriter, *http.Request) {})
+	if _, err := c.gatewayConfig(Connection{Server: "https://gateway.test/k8s", CertificateAuthorityData: "not-base64"}); err == nil {
+		t.Fatal("invalid CA accepted")
+	}
+	tlsServer := httptest.NewTLSServer(http.NotFoundHandler())
+	defer tlsServer.Close()
+	publicCA := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsServer.Certificate().Raw})
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(caPath, publicCA, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.APICAFile = caPath
+	if _, err := c.setupGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, append(publicCA, []byte("-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.setupGateway(context.Background()); err == nil {
+		t.Fatal("mixed public/private CA accepted")
+	}
+}
+
+func TestPrimaryHeartbeatStopsOnSelectionChangeAndNeverBooks(t *testing.T) {
+	identity := testAccessIdentity()
+	now := time.Now()
+	var heartbeats atomic.Int32
+	c, _ := testAccessClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/access" {
+			_ = json.NewEncoder(w).Encode(primaryAccess{Session: model.Session{ID: sessionB, Owner: identity.Key(), State: "ACTIVE", LastActivityAt: &now}, SelectionVersion: 2})
+			return
+		}
+		heartbeats.Add(1)
+		w.WriteHeader(400)
+	})
+	saveAccessTestToken(t, c)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.runPrimaryHeartbeat(ctx, identity.Key(), sessionA, 1, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if heartbeats.Load() != 0 {
+		t.Fatal("worker renewed a different selection or booked")
 	}
 }

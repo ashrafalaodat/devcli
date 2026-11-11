@@ -45,14 +45,14 @@ func executePersonal(t *testing.T, c *Client, args ...string) error {
 	t.Helper()
 	root := &cobra.Command{Use: "devctl", SilenceErrors: true, SilenceUsage: true}
 	c.addPATCommands(root)
-	root.SetArgs(append([]string{"token", "create", "--session", sessionA}, args...))
+	root.SetArgs(append([]string{"token", "create"}, args...))
 	return root.Execute()
 }
 
 func personalResponse(w http.ResponseWriter, id string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{"pat": store.PAT{ID: id, SessionID: sessionA, Name: "Test laptop", ExpiresAt: time.Now().Add(time.Hour)}, "kubeconfig": personalTestConfig})
+	_ = json.NewEncoder(w).Encode(map[string]any{"pat": store.PAT{ID: id, Name: "Test laptop", ExpiresAt: time.Now().Add(time.Hour)}, "kubeconfig": personalTestConfig})
 }
 
 func assertPersonalSecretHidden(t *testing.T, out, diagnostics *bytes.Buffer, err error) {

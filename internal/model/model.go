@@ -47,6 +47,23 @@ type Session struct {
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
 	Reason         string     `json:"reason"`
+	Primary        bool       `json:"primary"`
+}
+
+// DeveloperProfile is the server-wide reservation and primary selection for one
+// issuer/subject. Clients never choose their booking limit themselves.
+type DeveloperProfile struct {
+	OwnerID             string   `json:"owner_id"`
+	User                Identity `json:"user"`
+	MaxBookings         int      `json:"max_bookings"`
+	MaxBookingsOverride *int     `json:"max_bookings_override,omitempty"`
+	ActiveBookings      int      `json:"active_bookings"`
+	PrimarySession      *Session `json:"primary_session,omitempty"`
+	SelectionVersion    int64    `json:"selection_version"`
+}
+
+type Settings struct {
+	DefaultMaxBookings int `json:"default_max_bookings"`
 }
 type Booking struct {
 	Cluster  string            `json:"cluster,omitempty"`

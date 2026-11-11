@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/testutil"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -56,6 +57,9 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.run(admin, "admin", "register", "--id", "plugin", "--name", "Plugin fixture", "--kubeconfig", upstreamConfig)
+	bootstrap := t.TempDir()
+	env.login(bootstrap, "alice", true)
+	env.run(bootstrap, "start", "--cluster", "plugin")
 
 	// kubectl discovers only this plugin; the full devctl executable need not be
 	// present in the child's PATH. Credential and heartbeat use the plugin itself.
@@ -80,7 +84,7 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 		raw, err := cmd.Output()
 		return raw, err // Do not include auth URLs or credential output in diagnostics.
 	}
-	pathBytes, err := runPlugin("setup", "--cluster", "plugin", "--ttl", "1h")
+	pathBytes, err := runPlugin("setup")
 	if err != nil {
 		t.Fatal("kubectl could not discover or execute the plugin")
 	}
@@ -102,10 +106,10 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 	}
 	// A genuine interactive kubectl request causes the configured plugin to run
 	// its inherited OIDC code/PKCE flow, with no devctl management invocation.
-	env.firstAutomaticKubectl(alice, path, "alice")
+	env.firstPrimaryKubectl(alice, path, "alice", true)
 	_, sessions, err := database.Snapshot(context.Background())
 	if err != nil || len(sessions) != 1 || sessions[0].Cluster != "plugin" || sessions[0].State != "ACTIVE" {
-		t.Fatal("plugin did not reserve exactly one cluster")
+		t.Fatal("plugin login changed the one prepared booking")
 	}
 	first := sessions[0]
 	files, _ := filepath.Glob(filepath.Join(alice, "*", "tokens.json"))
@@ -126,7 +130,7 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 	if err = os.WriteFile(files[0], raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	pathBytes, err = runPlugin("login", "--cluster", "plugin", "--ttl", "1h")
+	pathBytes, err = runPlugin("login")
 	if err != nil || strings.TrimSpace(string(pathBytes)) != path {
 		t.Fatal("explicit plugin login did not refresh and retain its config path")
 	}
@@ -138,10 +142,49 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 	if err != nil || len(sessions) != 1 || sessions[0].ID != first.ID {
 		t.Fatal("plugin refresh created another booking")
 	}
-	env.automaticKubectl(alice, path, "get", "--raw=/version")
-	if _, err = runPlugin("status"); err != nil {
+	env.primaryKubectl(alice, path, "get", "--raw=/version")
+	statusRaw, err := runPlugin("status")
+	if err != nil {
 		t.Fatal("plugin status failed")
 	}
+	var profile model.DeveloperProfile
+	if json.Unmarshal(statusRaw, &profile) != nil || profile.PrimarySession == nil || profile.PrimarySession.ID != first.ID || profile.ActiveBookings != 1 {
+		t.Fatal("plugin status did not show current primary")
+	}
+	// Raising the server-side limit permits another explicit booking. Plugin
+	// login itself still performs no placement or additional reservation.
+	env.run(admin, "admin", "settings", "--max-bookings", "2", "--reason", "plugin switching integration")
+	secondUpstream := newKubernetesFixture(t)
+	secondConfig := filepath.Join(t.TempDir(), "second-upstream.yaml")
+	if err = os.WriteFile(secondConfig, []byte(secondUpstream.kubeconfig()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env.run(admin, "admin", "register", "--id", "plugin-second", "--name", "Second plugin fixture", "--kubeconfig", secondConfig)
+	second := session(t, env.run(bootstrap, "start", "--cluster", "plugin-second"))
+	statusRaw, err = runPlugin("status")
+	if err != nil || json.Unmarshal(statusRaw, &profile) != nil || profile.PrimarySession == nil || profile.PrimarySession.ID != first.ID {
+		t.Fatal("additional booking unexpectedly selected itself")
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := runPlugin("switch", "plugin-second")
+	if err != nil || json.Unmarshal(selected, &profile) != nil || profile.PrimarySession == nil || profile.PrimarySession.ID != second.ID {
+		t.Fatal("plugin switch failed")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("switch rewrote stable kubeconfig")
+	}
+	env.primaryKubectl(alice, path, "get", "--raw=/version")
+	secondUpstream.mu.Lock()
+	requests := len(secondUpstream.Requests)
+	secondUpstream.mu.Unlock()
+	if requests == 0 {
+		t.Fatal("stable plugin kubeconfig did not reach new primary")
+	}
+
 	if _, err = runPlugin("admin", "register"); err == nil {
 		t.Fatal("plugin exposed full CLI administrator command")
 	}
@@ -149,9 +192,14 @@ func TestKubectlPluginWorkflow(t *testing.T) {
 		t.Fatal("plugin logout failed")
 	}
 	_, sessions, err = database.Snapshot(context.Background())
-	if err != nil || sessions[0].State != "RELEASED" {
-		t.Fatal("plugin logout did not release reservation")
+	if err != nil || len(sessions) != 2 {
+		t.Fatal("unexpected plugin reservations after logout")
+	}
+	for _, booking := range sessions {
+		if booking.State != "RELEASED" {
+			t.Fatal("plugin logout did not release all own bookings")
+		}
 	}
 	env.run(admin, "logout")
-	t.Log("real kubectl plugin discovery, first-use PKCE login, booking, refresh rotation, stable session, reduced controls and logout passed")
+	t.Log("real plugin discovery, first-use PKCE without allocation, refresh rotation, unchanged config across primary switch, reduced controls and logout passed")
 }

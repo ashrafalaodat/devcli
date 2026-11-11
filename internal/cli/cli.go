@@ -173,6 +173,9 @@ func newCommand(c *Client) *cobra.Command {
 			c.Login.clear()
 			return e
 		}
+		if _, err := c.setupGateway(ctx); err != nil {
+			return err
+		}
 		return c.print(identity)
 	}})
 	root.AddCommand(&cobra.Command{Use: "whoami", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -219,12 +222,10 @@ func newCommand(c *Client) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		if out.State == "ACTIVE" {
-			if _, e := c.selectSession(cmd.Context(), out.ID); e != nil {
-				return fmt.Errorf("booking %s exists, but selecting it failed: %w", out.ID, e)
-			}
+		if _, e = c.setupGateway(cmd.Context()); e != nil {
+			return fmt.Errorf("booking %s exists, but writing the stable gateway configuration failed: %w", out.ID, e)
 		}
-		fmt.Fprintln(c.Err, "Selected gateway access for this profile. Kubernetes permissions and workloads are unchanged.")
+		fmt.Fprintln(c.Err, "Cluster booked. Your first booking becomes primary; additional bookings do not change the current primary.")
 		return c.print(out)
 	}}
 	start.Flags().StringVar(&cluster, "cluster", "", "Cluster ID or display name (otherwise automatic selection)")
@@ -255,21 +256,25 @@ func newCommand(c *Client) *cobra.Command {
 			return c.print(ss)
 		}
 		w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "SESSION\tCLUSTER\tDEVELOPER\tCONTACT\tSTATE\tEXPIRY")
+		fmt.Fprintln(w, "SESSION\tCLUSTER\tPRIMARY\tDEVELOPER\tCONTACT\tSTATE\tEXPIRY")
 		for _, v := range ss {
 			expiry := "until stop/logout"
 			if v.ExpiresAt != nil {
 				expiry = v.ExpiresAt.UTC().Format(time.RFC3339)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Cluster, v.DisplayName, v.Email, v.State, expiry)
+			fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%s\t%s\n", v.ID, v.Cluster, v.Primary, v.DisplayName, v.Email, v.State, expiry)
 		}
 		return w.Flush()
 	}}
 	sessions.Flags().BoolVar(&all, "all", false, "Show team bookings and contact details")
 	root.AddCommand(sessions)
-	root.AddCommand(&cobra.Command{Use: "status SESSION_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "status [SESSION_ID]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var out any
-		if e := c.request(cmd.Context(), "GET", sessionPath(args[0]), nil, "", &out); e != nil {
+		path := "/v1/profile"
+		if len(args) == 1 {
+			path = sessionPath(args[0])
+		}
+		if e := c.request(cmd.Context(), "GET", path, nil, "", &out); e != nil {
 			return e
 		}
 		return c.print(out)
@@ -311,32 +316,26 @@ func newCommand(c *Client) *cobra.Command {
 		if e := c.request(cmd.Context(), "POST", sessionPath(args[0])+"/stop", nil, "", &out); e != nil {
 			return e
 		}
-		if p, e := c.configPath(args[0]); e == nil {
-			os.Remove(p)
-		}
-		if e := c.clearActive(cmd.Context(), args[0]); e != nil {
-			return e
-		}
-		fmt.Fprintln(c.Err, "Booking released; gateway access is disabled. Cluster workloads were not deleted.")
+		fmt.Fprintln(c.Err, "Booking released. The stable gateway follows your remaining primary booking, if any. Cluster workloads were not deleted.")
 		return c.print(out)
 	}})
-	root.AddCommand(&cobra.Command{Use: "kubeconfig SESSION_ID", Short: "Write a gateway-only kubeconfig and print ONLY its path", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		path, e := c.download(cmd.Context(), args[0])
+	root.AddCommand(&cobra.Command{Use: "kubeconfig", Short: "Write your stable gateway kubeconfig and print ONLY its path", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		path, e := c.download(cmd.Context())
 		if e != nil {
 			return e
 		}
 		fmt.Fprintln(c.Out, path)
 		return nil
 	}})
-	root.AddCommand(&cobra.Command{Use: "exec SESSION_ID -- COMMAND [ARGS...]", DisableFlagParsing: true, RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 3 || args[1] != "--" {
-			return &ExitError{2, errors.New("usage: devctl exec SESSION_ID -- COMMAND [ARGS...]")}
+	root.AddCommand(&cobra.Command{Use: "exec -- COMMAND [ARGS...]", DisableFlagParsing: true, RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 2 || args[0] != "--" {
+			return &ExitError{2, errors.New("usage: devctl exec -- COMMAND [ARGS...]")}
 		}
-		path, e := c.download(cmd.Context(), args[0])
+		path, e := c.download(cmd.Context())
 		if e != nil {
 			return e
 		}
-		child := exec.CommandContext(cmd.Context(), args[2], args[3:]...)
+		child := exec.CommandContext(cmd.Context(), args[1], args[2:]...)
 		child.Stdin = os.Stdin
 		child.Stdout = c.Out
 		child.Stderr = c.Err
@@ -386,7 +385,7 @@ func newCommand(c *Client) *cobra.Command {
 		for _, p := range files {
 			os.Remove(p)
 		}
-		if e = c.clearActive(ctx, ""); e != nil {
+		if e = c.clearActive(ctx); e != nil {
 			return e
 		}
 		fmt.Fprintln(c.Err, "Local login cleared; gateway configuration is inactive. Previously distributed original cluster credentials are not revoked.")
@@ -404,12 +403,6 @@ func sessionPath(id string) string { return "/v1/sessions/" + url.PathEscape(id)
 
 var sessionID = regexp.MustCompile(`^s-[a-f0-9-]{36}$`)
 
-func (c *Client) configPath(id string) (string, error) {
-	if !sessionID.MatchString(id) {
-		return "", errors.New("invalid session ID")
-	}
-	return filepath.Join(c.Login.Dir, id+".yaml"), nil
-}
 func (c *Client) addAdmin(root *cobra.Command) {
 	admin := &cobra.Command{Use: "admin", Short: "Administrator registry operations (no Kubernetes API calls)"}
 	var id, name, file, contextName string
@@ -482,5 +475,6 @@ func (c *Client) addAdmin(root *cobra.Command) {
 	}}
 	force.Flags().StringVar(&forceReason, "reason", "", "Audit reason")
 	admin.AddCommand(force)
+	c.addPolicyCommands(admin)
 	root.AddCommand(admin)
 }

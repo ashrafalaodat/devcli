@@ -16,23 +16,22 @@ func TestGatewayRoutingAndPublicURL(t *testing.T) {
 			t.Fatal("unsafe publicURL accepted", raw)
 		}
 	}
-	const id = "s-12345678-1234-1234-1234-123456789abc"
-	for _, raw := range []string{"/k8s/sessions/" + id + "/version", "/k8s/sessions/" + id + "/api/v1/namespaces/default/pods/p/log?follow=true", "/k8s/sessions/" + id + "/api/v1/services/http:service:80/proxy/hello%20world"} {
+	for _, raw := range []string{"/k8s" + "/version", "/k8s" + "/api/v1/namespaces/default/pods/p/log?follow=true", "/k8s" + "/api/v1/services/http:service:80/proxy/hello%20world"} {
 		u, e := url.Parse(raw)
 		if e != nil {
 			t.Fatal(e)
 		}
-		got, path, e := gatewayPath(u)
-		if e != nil || got != id || path == "" {
+		path, e := gatewayPath(u)
+		if e != nil || path == "" {
 			t.Fatal("valid path rejected", raw, e)
 		}
 	}
-	for _, raw := range []string{"/k8s/sessions/" + id + "/../other", "/k8s/sessions/" + id + "/%2e%2e/other", "/k8s/sessions/" + id + "/%252e%252e/other", "/k8s/sessions/bad/version", "/k8s/sessions/" + id + "%2fother/version", "/k8s%2fsessions/" + id + "/version"} {
+	for _, raw := range []string{"/k8s" + "/../other", "/k8s" + "/%2e%2e/other", "/k8s" + "/%252e%252e/other", "/other/version", "/k8s%2fapi/version", "/k8s%2fapi/version"} {
 		u, e := url.Parse(raw)
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, _, e = gatewayPath(u); e == nil {
+		if _, e = gatewayPath(u); e == nil {
 			t.Fatal("ambiguous route accepted", raw)
 		}
 	}

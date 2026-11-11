@@ -41,13 +41,15 @@
         <section id="section-overview" class="page-section" aria-labelledby="overview-title">
           <div class="page-heading"><div><div class="eyebrow">WORKSPACE</div><h1 id="overview-title">Your environments</h1><p>Reserve a whole cluster. Share it when you choose.</p></div><button id="refresh-overview" type="button" class="button secondary">↻ Refresh</button></div>
           <div id="metrics" class="metrics"></div>
+          <section id="primary-summary" class="panel primary-summary" aria-label="Primary cluster"></section>
           <section class="panel booking-panel" aria-labelledby="booking-title"><div><h2 id="booking-title">Book a cluster</h2><p>A free cluster is exclusive to you. Existing holders must enable sharing before anyone can join.</p></div>
             <form id="booking-form" class="form-grid">
               <label>Cluster<select id="booking-cluster" name="cluster"><option value="">Choose automatically</option></select></label>
               <label>Required labels<input name="selector" placeholder="region=eu,type=test" autocomplete="off"><span class="field-help">Optional, comma-separated key=value pairs</span></label>
               <label>Booking duration<input name="ttl" placeholder="Until stop or logout" autocomplete="off"><span class="field-help">Optional: 4h, 24h, up to 168h</span></label>
-              <button class="button primary align-start" type="submit">Book cluster <span aria-hidden="true">→</span></button>
+              <button id="booking-submit" class="button primary align-start" type="submit">Book cluster <span aria-hidden="true">→</span></button>
             </form>
+            <p id="booking-limit-help" class="field-help" aria-live="polite"></p>
           </section>
           <div class="section-heading"><h2>Your active bookings</h2><span id="booking-count" class="pill neutral">0 active</span></div>
           <div id="my-bookings" class="booking-list"></div>
@@ -60,31 +62,42 @@
           <div id="cluster-list" class="cluster-grid"></div>
         </section>
         <section id="section-access" class="page-section hidden" aria-labelledby="access-title">
-          <div class="page-heading"><div><div class="eyebrow">CONNECT YOUR TOOLS</div><h1 id="access-title">One backend. Three ways in.</h1><p>Choose the workflow that fits you. Each uses the same reservations and gateway.</p></div></div>
+          <div class="page-heading"><div><div class="eyebrow">CONNECT YOUR TOOLS</div><h1 id="access-title">One backend. Three ways in.</h1><p>One stable configuration follows your primary cluster on every device. Book a cluster first, then choose how to connect.</p></div></div>
           <div class="access-grid">
             <article class="panel access-card"><span class="option-number">01 / FULL CONTROL</span><h2>Developer CLI</h2><p>Book, select, share, renew, and stop environments. Administrator commands are available to approved admins.</p><pre>devctl login
+devctl start
 export KUBECONFIG="$(devctl setup)"
 kubectl get pods
 devctl sessions</pre><span class="pill neutral">Client installation required</span></article>
-            <article class="panel access-card"><span class="option-number">02 / EVERYDAY KUBECTL</span><h2>kubectl plugin</h2><p>Log in and use the generated gateway configuration. The helper refreshes short-lived access tokens automatically.</p><pre>export KUBECONFIG="$(kubectl devctl login)"
+            <article class="panel access-card"><span class="option-number">02 / EVERYDAY KUBECTL</span><h2>kubectl plugin</h2><p>Log in and refresh tokens automatically. Book clusters in the UI or full CLI; switch an existing booking with the plugin.</p><pre>export KUBECONFIG="$(kubectl devctl login)"
+kubectl devctl switch CLUSTER_ID
 kubectl get pods</pre><span class="pill neutral">Plugin installation required</span></article>
-            <article class="panel access-card highlighted"><span class="option-number">03 / NO EXTRA INSTALLATION</span><h2>Browser kubeconfig</h2><p>Download a personal config for an active booking. Stock kubectl sends its PAT directly to the gateway.</p><pre>export KUBECONFIG=/path/to/download.yaml
+            <article class="panel access-card highlighted"><span class="option-number">03 / NO EXTRA INSTALLATION</span><h2>Browser kubeconfig</h2><p>Download one personal config. Stock kubectl follows your current primary cluster without installing a helper.</p><pre>export KUBECONFIG=/path/to/download.yaml
 kubectl get namespaces</pre><span class="pill success">Only kubectl required</span></article>
           </div>
-          <section class="panel" aria-labelledby="download-title"><h2 id="download-title">Create a browser kubeconfig</h2><p>This file contains a personal gateway access token. Treat it as a credential. Original cluster kubeconfigs never leave the backend.</p>
+          <section class="panel" aria-labelledby="download-title"><h2 id="download-title">Your reusable browser kubeconfig</h2><p>This file contains a personal gateway token and works across your primary-cluster changes. You can create it before booking. Original cluster credentials stay on the backend.</p>
             <form id="pat-form" class="form-grid">
-              <label>Your active booking<select id="pat-session" name="session_id" required><option value="">Select a booking</option></select></label>
               <label>Credential name<input name="name" value="Browser kubeconfig" maxlength="100" required autocomplete="off"></label>
               <label>Access duration<select name="ttl"><option value="8h">8 hours</option><option value="1h">1 hour</option><option value="24h">1 day</option><option value="168h">7 days</option></select></label>
               <button class="button primary align-start" type="submit">Download kubeconfig <span aria-hidden="true">↓</span></button>
             </form>
-            <p class="callout">PATs do not rotate or refresh themselves. Access ends when the PAT expires, is revoked, or the booking ends. Create a replacement here when needed. Revoking a PAT does not stop the booking.</p>
+            <p class="callout">Keep the same file when switching clusters. With no active booking, kubectl reports “no cluster is booked.” PATs expire and do not refresh themselves; create a replacement after expiry or revocation. Stopping a booking does not revoke this token. Signing out revokes your tokens and releases your bookings.</p>
           </section>
           <div class="section-heading"><h2>Your gateway tokens</h2><button id="refresh-pats" class="button secondary" type="button">↻ Refresh</button></div>
           <div id="pat-list" class="panel table-wrap"></div>
         </section>
         <section id="section-admin" class="page-section hidden" aria-labelledby="admin-title">
           <div class="page-heading"><div><div class="eyebrow">ADMINISTRATION</div><h1 id="admin-title">Manage the workspace</h1><p>Administrative changes are audited. No action here deletes Kubernetes workloads.</p></div><button id="refresh-admin" class="button secondary" type="button">↻ Refresh</button></div>
+          <section class="panel" aria-labelledby="limits-title"><h2 id="limits-title">Developer booking limits</h2><p>Each developer can hold one cluster by default. Increase the default or set a developer-specific override. Lowering a limit preserves existing bookings and prevents new ones until the developer is below the limit.</p>
+            <form id="settings-form" class="form-grid">
+              <label>Default maximum clusters<input id="default-booking-limit" name="default_max_bookings" type="number" min="1" max="100" value="1" required></label>
+              <label class="span-two">Audit reason<input name="reason" placeholder="Update the team booking policy" maxlength="500" required autocomplete="off"></label>
+              <button class="button primary align-start" type="submit">Save default limit</button>
+            </form>
+            <p class="field-help">Limits apply across all browsers, terminals, profiles, and shared bookings for the same SSO identity.</p>
+          </section>
+          <div class="section-heading"><h2>Developer overrides</h2><span class="subtle">Leave the override empty to inherit the default</span></div>
+          <div id="developer-list" class="panel table-wrap"></div>
           <section class="panel" aria-labelledby="register-title"><h2 id="register-title">Register a cluster</h2><p>Import an approved, trusted kubeconfig. The server encrypts it before storage. Registration does not connect to or modify the cluster.</p>
             <form id="register-form" class="form-grid">
               <label>Cluster ID<input name="id" placeholder="dev-eu-01" pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}" required maxlength="63" autocomplete="off"></label>
@@ -96,7 +109,7 @@ kubectl get namespaces</pre><span class="pill success">Only kubectl required</sp
             </form>
           </section>
           <div class="section-heading"><h2>Cluster placement controls</h2></div><div id="maintenance-list" class="cluster-grid"></div>
-          <section class="panel" aria-labelledby="release-title"><h2 id="release-title">Release a booking</h2><p>End gateway access for a booking. Cluster workloads and credentials obtained outside devctl remain unchanged.</p>
+          <section class="panel" aria-labelledby="release-title"><h2 id="release-title">Release a booking</h2><p>End a booking. If it is primary, the oldest remaining booking becomes primary; otherwise kubectl reports no cluster is booked. Personal gateway tokens remain valid until their own expiry or revocation. Workloads remain.</p>
             <form id="release-form" class="form-grid">
               <label>Active booking<select id="release-session" name="session_id" required><option value="">Select a booking</option></select></label>
               <label class="span-two">Audit reason<input name="reason" placeholder="Owner requested release" required maxlength="500" autocomplete="off"></label>

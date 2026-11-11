@@ -2,7 +2,9 @@ package integration
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -97,7 +99,8 @@ func (e *environment) browserRequest(b *browserSession, method, path string, bod
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", b.csrf)
 	req.Header.Set("Origin", e.api)
-	req.Header.Set("Idempotency-Key", "browser-test-"+b.user.Subject+path)
+	requestHash := sha256.Sum256(append([]byte(b.user.Subject+path), data...))
+	req.Header.Set("Idempotency-Key", "browser-test-"+hex.EncodeToString(requestHash[:]))
 	resp, err := b.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -132,18 +135,25 @@ func TestBrowserAccess(t *testing.T) {
 	bob := e.browserLogin("bob", true)
 	e.browserLogin("outsider", false)
 	t.Log("real browser code flow, approved groups, state/nonce/PKCE and encrypted server-side sessions established")
-	upstream := newKubernetesFixture(t)
-	e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": "web-fixture", "name": "Browser fixture", "labels": map[string]string{"test": "browser"}, "kubeconfig": upstream.kubeconfig()}, 200)
-	booked := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 201))
-	e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 409)
-	e.browserRequest(alice, "POST", "/v1/sessions/"+booked.ID+"/share", map[string]bool{"shareable": true}, 200)
-	second := session(t, e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 201))
-	e.browserRequest(bob, "POST", "/v1/pats", map[string]string{"session_id": booked.ID, "name": "forbidden"}, 403)
+	upstream := newKubernetesFixtureVersion(t, "v1.35.1-browser-a")
+	otherUpstream := newKubernetesFixtureVersion(t, "v1.36.0-browser-b")
+	for _, registration := range []struct{ id, name, config string }{
+		{"web-fixture", "Browser fixture A", upstream.kubeconfig()},
+		{"web-other", "Browser fixture B", otherUpstream.kubeconfig()},
+	} {
+		e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": registration.id, "name": registration.name, "labels": map[string]string{"test": "browser"}, "kubeconfig": registration.config}, 200)
+	}
+	var settings model.Settings
+	if err = json.Unmarshal(e.browserRequest(admin, "GET", "/v1/admin/settings", nil, 200), &settings); err != nil || settings.DefaultMaxBookings != 1 {
+		t.Fatal("default developer limit is not one")
+	}
+	// Download once, before any reservation. The PAT authenticates its developer,
+	// and the fixed gateway URL obtains that developer's current primary later.
 	var issued struct {
 		PAT        store.PAT `json:"pat"`
 		Kubeconfig string    `json:"kubeconfig"`
 	}
-	if err = json.Unmarshal(e.browserRequest(alice, "POST", "/v1/pats", map[string]string{"session_id": booked.ID, "name": "Browser laptop", "ttl": "1h"}, 201), &issued); err != nil {
+	if err = json.Unmarshal(e.browserRequest(alice, "POST", "/v1/pats", map[string]string{"name": "Browser laptop", "ttl": "1h"}, 201), &issued); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := clientcmd.Load([]byte(issued.Kubeconfig))
@@ -152,6 +162,9 @@ func TestBrowserAccess(t *testing.T) {
 	}
 	if len(cfg.AuthInfos) != 1 || cfg.AuthInfos["devctl-personal-access"].Exec != nil || !strings.HasPrefix(cfg.AuthInfos["devctl-personal-access"].Token, "dcpat_") {
 		t.Fatal("download requires helper or missing PAT")
+	}
+	if cfg.Clusters["devctl-gateway"].Server != e.api+"/k8s" || issued.PAT.Scope != "kubernetes:primary" {
+		t.Fatal("download contains old session routing")
 	}
 	kubectl, err := exec.LookPath("kubectl")
 	if err != nil {
@@ -162,18 +175,85 @@ func TestBrowserAccess(t *testing.T) {
 	if err = os.WriteFile(configPath, []byte(issued.Kubeconfig), 0600); err != nil {
 		t.Fatal(err)
 	}
+	version := func() (string, error) {
+		cmd := exec.Command(kubectl, "--cache-dir", filepath.Join(dir, "cache"), "--kubeconfig", configPath, "get", "--raw=/version", "--request-timeout=5s")
+		cmd.Env = []string{"PATH=" + dir, "KUBECONFIG=" + configPath}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	expectVersion := func(want string) {
+		t.Helper()
+		out, err := version()
+		if err != nil || !strings.Contains(out, want) {
+			t.Fatalf("native kubectl did not reach expected primary %s (response withheld)", want)
+		}
+	}
+	expectNoBooking := func() {
+		t.Helper()
+		out, err := version()
+		if err == nil || !strings.Contains(out, "no cluster is booked") {
+			t.Fatal("native kubectl did not return clear no-booking error")
+		}
+	}
+	expectNoBooking()
+	booked := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 201))
+	if !booked.Primary {
+		t.Fatal("first browser booking did not become primary")
+	}
+	expectVersion("v1.35.1-browser-a")
+	e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-other"}, 409)
+	// Exercise both organisation defaults and the administrator's per-developer
+	// override. Alice retains two slots while Bob inherits the default of one.
+	e.browserRequest(admin, "PATCH", "/v1/admin/settings", map[string]any{"default_max_bookings": 2, "reason": "browser integration default"}, 200)
+	e.browserRequest(admin, "PATCH", "/v1/admin/developers/"+alice.user.Key(), map[string]any{"max_bookings": 2, "reason": "Alice may hold two integration clusters"}, 200)
+	e.browserRequest(admin, "PATCH", "/v1/admin/settings", map[string]any{"default_max_bookings": 1, "reason": "restore organisation default"}, 200)
+	additional := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-other"}, 201))
+	if additional.Primary {
+		t.Fatal("second browser booking replaced primary")
+	}
+	expectVersion("v1.35.1-browser-a")
+	e.browserRequest(alice, "POST", "/v1/primary", map[string]string{"cluster": "web-other"}, 200)
+	expectVersion("v1.36.0-browser-b")
+	e.browserRequest(alice, "POST", "/v1/primary", map[string]string{"cluster": booked.ID}, 200)
+	expectVersion("v1.35.1-browser-a")
+	e.browserRequest(bob, "POST", "/v1/primary", map[string]string{"cluster": additional.ID}, 403)
+	e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 409)
+	e.browserRequest(alice, "POST", "/v1/sessions/"+booked.ID+"/share", map[string]bool{"shareable": true}, 200)
+	second := session(t, e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "web-fixture"}, 201))
+	e.browserRequest(bob, "POST", "/v1/pats", map[string]string{"session_id": booked.ID, "name": "old session scope rejected"}, 400)
+	// Reducing a limit leaves existing bookings and selection intact.
+	e.browserRequest(admin, "PATCH", "/v1/admin/developers/"+alice.user.Key(), map[string]any{"max_bookings": 1, "reason": "reduce future holdings without eviction"}, 200)
+	var profile model.DeveloperProfile
+	if err = json.Unmarshal(e.browserRequest(alice, "GET", "/v1/profile", nil, 200), &profile); err != nil || profile.ActiveBookings != 2 || profile.MaxBookings != 1 || profile.PrimarySession.ID != booked.ID {
+		t.Fatal("limit reduction evicted or changed primary")
+	}
+	e.browserRequest(alice, "POST", "/v1/sessions/"+booked.ID+"/stop", nil, 200)
+	expectVersion("v1.36.0-browser-b")
+	e.browserRequest(alice, "POST", "/v1/sessions/"+additional.ID+"/stop", nil, 200)
+	expectNoBooking()
+	// An explicit new booking restores access with the exact same saved token.
+	restored := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "web-other", TTL: "1h"}, 201))
+	if !restored.Primary {
+		t.Fatal("new booking after release did not become primary")
+	}
+	expectVersion("v1.36.0-browser-b")
+	savedConfig, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(savedConfig, []byte(issued.Kubeconfig)) {
+		t.Fatal("primary switching rewrote downloaded kubeconfig")
+	}
 	command := func() error {
 		cmd := exec.Command(kubectl, "--cache-dir", filepath.Join(dir, "cache"), "--kubeconfig", configPath, "get", "pod", "example", "-n", "default", "-o", "name")
 		cmd.Env = []string{"PATH=" + dir, "KUBECONFIG=" + configPath}
-		output, err := cmd.CombinedOutput()
-		if err == nil && !strings.Contains(string(output), "pod/example") {
+		out, err := cmd.CombinedOutput()
+		if err == nil && !strings.Contains(string(out), "pod/example") {
 			t.Fatal("unexpected fixture result")
 		}
 		return err
 	}
 	if err = command(); err != nil {
-		t.Fatalf("native kubectl browser config failed: %v", err)
+		t.Fatal("native kubectl browser config failed")
 	}
+	t.Log("one PAT/config, clear no-booking errors, default/per-user limits, primary switching across two TLS fixtures, sharing and release/rebooking passed")
 	e.stop()
 	e.start()
 	e.browserRequest(alice, "GET", "/web/session", nil, 200)

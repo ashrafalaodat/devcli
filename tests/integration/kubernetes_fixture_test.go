@@ -42,6 +42,9 @@ type kubernetesFixture struct {
 // traffic without creating or accessing a real cluster. Kubernetes admission,
 // scheduling, Pod execution and cluster authorization are outside its scope.
 func newKubernetesFixture(t *testing.T) *kubernetesFixture {
+	return newKubernetesFixtureVersion(t, "v1.35.1-fixture")
+}
+func newKubernetesFixtureVersion(t *testing.T, version string) *kubernetesFixture {
 	t.Helper()
 	f := &kubernetesFixture{}
 	f.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +64,7 @@ func newKubernetesFixture(t *testing.T) *kubernetesFixture {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version":
-			json.NewEncoder(w).Encode(map[string]any{"major": "1", "minor": "35", "gitVersion": "v1.35.1-fixture", "gitCommit": "fixture", "gitTreeState": "clean", "buildDate": "2026-01-01T00:00:00Z", "goVersion": "go1.26.0", "compiler": "gc", "platform": "linux/amd64"})
+			json.NewEncoder(w).Encode(map[string]any{"major": "1", "minor": "35", "gitVersion": version, "gitCommit": "fixture", "gitTreeState": "clean", "buildDate": "2026-01-01T00:00:00Z", "goVersion": "go1.26.0", "compiler": "gc", "platform": "linux/amd64"})
 		case "/api":
 			json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "APIVersions", "versions": []string{"v1"}, "serverAddressByClientCIDRs": []any{}})
 		case "/apis":

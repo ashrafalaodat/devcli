@@ -18,7 +18,7 @@ var personalTokenID = regexp.MustCompile(`^p-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}
 // Credential response bodies and cleanup errors may themselves be sensitive.
 // Report only a local, fixed message while preserving useful CLI exit codes.
 func personalIssuanceError(err error) error {
-	message := errors.New("cannot issue personal gateway credential; check your login, owned active booking, and requested duration")
+	message := errors.New("cannot issue personal gateway credential; check your login and requested duration")
 	var exit *ExitError
 	if errors.As(err, &exit) {
 		return &ExitError{Code: exit.Code, Err: message}
@@ -42,16 +42,13 @@ func (c *Client) addPATCommands(root *cobra.Command) {
 		}
 		return c.print(out)
 	}})
-	var session, name, ttl, output string
+	var name, ttl, output string
 	create := &cobra.Command{Use: "create", Short: "Write a one-time PAT kubeconfig and print only its path", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		if !sessionID.MatchString(session) {
-			return errors.New("valid --session required")
-		}
 		var result struct {
 			PAT        store.PAT `json:"pat"`
 			Kubeconfig string    `json:"kubeconfig"`
 		}
-		if err := c.request(cmd.Context(), "POST", "/v1/pats", map[string]string{"session_id": session, "name": name, "ttl": ttl}, "", &result); err != nil {
+		if err := c.request(cmd.Context(), "POST", "/v1/pats", map[string]string{"name": name, "ttl": ttl}, "", &result); err != nil {
 			return personalIssuanceError(err)
 		}
 		if !personalTokenID.MatchString(result.PAT.ID) {
@@ -82,11 +79,9 @@ func (c *Client) addPATCommands(root *cobra.Command) {
 		_, err = fmt.Fprintln(c.Out, path)
 		return err
 	}}
-	create.Flags().StringVar(&session, "session", "", "Owned active booking")
 	create.Flags().StringVar(&name, "name", "CLI personal credential", "Credential display name")
 	create.Flags().StringVar(&ttl, "ttl", "8h", "Credential duration, from 1m through 168h")
 	create.Flags().StringVar(&output, "output", "", "New private output file (default: profile directory)")
-	_ = create.MarkFlagRequired("session")
 	token.AddCommand(create)
 	var reason string
 	revoke := &cobra.Command{Use: "revoke PAT_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

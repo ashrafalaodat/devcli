@@ -49,3 +49,5 @@ else
   echo 'For this Bash/Zsh terminal, run:'
   printf 'export KUBECONFIG=%q\n' "$active_config"
 fi
+
+echo 'Book your first cluster using devctl start or the web UI. The stable kubeconfig follows your primary selection.'

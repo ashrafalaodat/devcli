@@ -59,7 +59,7 @@ func respond(w http.ResponseWriter, e error, v any) {
 			fail(w, 404, "not found")
 		case errors.Is(e, store.ErrForbidden):
 			fail(w, 403, "not permitted for this identity")
-		case errors.Is(e, scheduler.ErrUnavailable), errors.Is(e, store.ErrKey), errors.Is(e, store.ErrConflict):
+		case errors.Is(e, scheduler.ErrUnavailable), errors.Is(e, store.ErrKey), errors.Is(e, store.ErrConflict), errors.Is(e, store.ErrBookingLimit), errors.Is(e, store.ErrNoPrimary):
 			fail(w, 409, e.Error())
 		default:
 			fail(w, 409, e.Error())
@@ -86,6 +86,14 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, u)
 	})
+	m.HandleFunc("GET /v1/profile", s.profile)
+	m.HandleFunc("GET /v1/connection", s.connection)
+	m.HandleFunc("POST /v1/primary", s.selectPrimary)
+	m.HandleFunc("GET /v1/access", s.access)
+	m.HandleFunc("POST /v1/access/heartbeat", s.heartbeat)
+	m.HandleFunc("/v1/auto/", func(w http.ResponseWriter, r *http.Request) {
+		fail(w, http.StatusGone, "automatic booking bindings were removed; book explicitly and use your primary cluster")
+	})
 	m.HandleFunc("GET /v1/clusters", func(w http.ResponseWriter, r *http.Request) {
 		cs, _, e := s.Store.Snapshot(r.Context())
 		respond(w, e, cs)
@@ -96,9 +104,6 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("GET /v1/sessions/{id}", s.get)
 	m.HandleFunc("POST /v1/sessions", s.book)
-	m.HandleFunc("POST /v1/auto/{binding}/ensure", s.ensureAutomatic)
-	m.HandleFunc("GET /v1/auto/{binding}", s.automatic)
-	m.HandleFunc("POST /v1/auto/{binding}/heartbeat", s.heartbeatAutomatic)
 	m.HandleFunc("POST /v1/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
 		e := s.Store.Stop(r.Context(), user(r), r.PathValue("id"), "holder ended booking; gateway requests denied; workloads retained", false)
 		if errors.Is(e, store.ErrForbidden) {
@@ -109,7 +114,9 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("POST /v1/sessions/{id}/share", s.share)
 	m.HandleFunc("POST /v1/sessions/{id}/renew", s.renew)
-	m.HandleFunc("GET /v1/sessions/{id}/connection", s.connection)
+	m.HandleFunc("GET /v1/sessions/{id}/connection", func(w http.ResponseWriter, r *http.Request) {
+		fail(w, http.StatusGone, "per-booking connection metadata was removed; use /v1/connection")
+	})
 	m.HandleFunc("GET /v1/sessions/{id}/kubeconfig", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusGone, "raw kubeconfig delivery removed; use devctl kubeconfig for gateway configuration")
 	})
@@ -121,11 +128,19 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /v1/pats", s.listPATs)
 	m.HandleFunc("DELETE /v1/pats/{id}", s.revokePAT)
 	m.HandleFunc("GET /v1/admin/audit", s.auditEvents)
+	m.HandleFunc("GET /v1/admin/settings", s.settings)
+	m.HandleFunc("PATCH /v1/admin/settings", s.updateSettings)
+	m.HandleFunc("GET /v1/admin/developers", s.developers)
+	m.HandleFunc("PATCH /v1/admin/developers/{owner}", s.updateDeveloper)
 	m.HandleFunc("POST /v1/admin/clusters", s.register)
 	m.HandleFunc("PATCH /v1/admin/clusters/{id}", s.maintain)
 	m.HandleFunc("POST /v1/admin/sessions/{id}/release", s.force)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/k8s/sessions/") || strings.HasPrefix(r.URL.Path, "/k8s/auto/") {
+			gatewayStatus(w, http.StatusGone, "Gone", "per-booking gateway URLs were removed; generate one new primary-cluster kubeconfig")
+			return
+		}
+		if r.URL.Path == "/k8s" || strings.HasPrefix(r.URL.Path, "/k8s/") {
 			s.gateway(w, r)
 			return
 		}
@@ -150,6 +165,10 @@ func (s *Server) Handler() http.Handler {
 		if e != nil {
 			slog.Warn("authentication rejected", "reason", e.Error())
 			fail(w, 401, "invalid token or user not approved")
+			return
+		}
+		if e = s.Store.ObserveIdentity(r.Context(), u); e != nil {
+			fail(w, http.StatusServiceUnavailable, "developer profile unavailable")
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/admin/") && !u.Admin {

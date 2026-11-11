@@ -5,3 +5,4 @@
 @media(prefers-reduced-motion:no-preference){.button,.nav-item{transition:background .12s,border-color .12s}.page-section{animation:appear .18s ease-out}@keyframes appear{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:none}}}
 #audit-list { max-height: 32rem; overflow: auto; }
 #audit-list thead th { position: sticky; top: 0; z-index: 1; }
+.primary-summary h3{margin:.4rem 0;color:var(--green-dark,#174a38)}.primary-booking{border-color:#78ad91;box-shadow:0 0 0 1px #d5e8dc}.developer-limit-form{display:flex;gap:.5rem;align-items:center;min-width:340px}.developer-limit-form input[type=number]{width:100px}.developer-limit-form input[name=reason]{min-width:130px;flex:1}#booking-limit-help{margin-bottom:0}button:disabled{cursor:not-allowed;opacity:.55}

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -66,7 +67,7 @@ func (s *Store) Audit(ctx context.Context, actor, action, id, detail string) err
 	return s.update(ctx, func(t *Tx) error { return t.audit(ctx, actor, action, id, detail) })
 }
 func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
-	rows, e := t.Query(ctx, "SELECT id,owner_id,identity,cluster_id,state,created_at,ended_at,expires_at,last_activity_at,reason FROM sessions ORDER BY created_at,id")
+	rows, e := t.Query(ctx, "SELECT s.id,s.owner_id,s.identity,s.cluster_id,s.state,s.created_at,s.ended_at,s.expires_at,s.last_activity_at,s.reason,COALESCE(d.primary_session_id=s.id,false) FROM sessions s LEFT JOIN developers d ON d.owner_id=s.owner_id ORDER BY s.created_at,s.id")
 	if e != nil {
 		return nil, e
 	}
@@ -75,7 +76,7 @@ func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
 	for rows.Next() {
 		var v model.Session
 		var raw []byte
-		if e = rows.Scan(&v.ID, &v.Owner, &raw, &v.Cluster, &v.State, &v.CreatedAt, &v.EndedAt, &v.ExpiresAt, &v.LastActivityAt, &v.Reason); e != nil {
+		if e = rows.Scan(&v.ID, &v.Owner, &raw, &v.Cluster, &v.State, &v.CreatedAt, &v.EndedAt, &v.ExpiresAt, &v.LastActivityAt, &v.Reason, &v.Primary); e != nil {
 			return nil, e
 		}
 		var u model.Identity
@@ -151,15 +152,15 @@ func (t *Tx) repair(ctx context.Context, cluster string) error {
 	return e
 }
 func (t *Tx) expire(ctx context.Context) error {
-	rows, e := t.Query(ctx, "UPDATE sessions SET state='EXPIRED',ended_at=clock_timestamp(),reason='optional lease expired; gateway requests denied; legacy credentials are not revoked' WHERE state='ACTIVE' AND expires_at<=clock_timestamp() RETURNING id,cluster_id")
+	rows, e := t.Query(ctx, "UPDATE sessions SET state='EXPIRED',ended_at=clock_timestamp(),reason='optional lease expired; gateway requests denied; legacy credentials are not revoked' WHERE state='ACTIVE' AND expires_at<=clock_timestamp() RETURNING id,cluster_id,owner_id")
 	if e != nil {
 		return e
 	}
-	type item struct{ id, cluster string }
+	type item struct{ id, cluster, owner string }
 	items := []item{}
 	for rows.Next() {
 		var v item
-		if e = rows.Scan(&v.id, &v.cluster); e != nil {
+		if e = rows.Scan(&v.id, &v.cluster, &v.owner); e != nil {
 			rows.Close()
 			return e
 		}
@@ -171,7 +172,7 @@ func (t *Tx) expire(ctx context.Context) error {
 		return e
 	}
 	for _, v := range items {
-		if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE session_id=$1", v.id); e != nil {
+		if e = t.repairPrimary(ctx, v.owner); e != nil {
 			return e
 		}
 		if e = t.repair(ctx, v.cluster); e != nil {
@@ -249,6 +250,16 @@ func (t *Tx) book(ctx context.Context, u model.Identity, b model.Booking, key st
 			}
 			return ErrNotFound
 		}
+		if e := t.observeIdentity(ctx, u); e != nil {
+			return e
+		}
+		var limit, held int
+		if e := t.QueryRow(ctx, "SELECT COALESCE(d.max_bookings_override,a.default_max_bookings),(SELECT count(*) FROM sessions WHERE owner_id=$1 AND state='ACTIVE') FROM developers d CROSS JOIN application_settings a WHERE d.owner_id=$1", u.Key()).Scan(&limit, &held); e != nil {
+			return e
+		}
+		if held >= limit {
+			return fmt.Errorf("%w: you hold %d of %d allowed clusters", ErrBookingLimit, held, limit)
+		}
 		cs, e := t.clusters(ctx, ss)
 		if e != nil {
 			return e
@@ -289,6 +300,12 @@ func (t *Tx) book(ctx context.Context, u model.Identity, b model.Booking, key st
 			}
 		}
 		if _, e = t.Exec(ctx, "INSERT INTO booking_keys VALUES($1,$2,$3,$4)", u.Key(), key, hash, out.ID); e != nil {
+			return e
+		}
+		if e = t.repairPrimary(ctx, u.Key()); e != nil {
+			return e
+		}
+		if e = t.QueryRow(ctx, "SELECT primary_session_id=$2 FROM developers WHERE owner_id=$1", u.Key(), out.ID).Scan(&out.Primary); e != nil {
 			return e
 		}
 		created = true
@@ -344,7 +361,7 @@ func (t *Tx) stop(ctx context.Context, u model.Identity, id, reason string, forc
 	if _, e = t.Exec(ctx, "UPDATE sessions SET state='RELEASED',ended_at=clock_timestamp(),reason=$2 WHERE id=$1", id, reason); e != nil {
 		return e
 	}
-	if _, e = t.Exec(ctx, "UPDATE personal_access_tokens SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE session_id=$1", id); e != nil {
+	if e = t.repairPrimary(ctx, owner); e != nil {
 		return e
 	}
 	if e = t.repair(ctx, cluster); e != nil {

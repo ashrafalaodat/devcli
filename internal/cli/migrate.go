@@ -30,6 +30,17 @@ func scrubLegacySessionConfigs(dir string) error {
 		return errors.New("cannot lock legacy session migration")
 	}
 	defer lock.Unlock()
+	legacyBinding := filepath.Join(dir, "auto-binding.json")
+	if info, err := os.Lstat(legacyBinding); err == nil {
+		if !info.Mode().IsRegular() || info.Size() > 64<<10 || info.Mode().Perm()&0077 != 0 {
+			return errors.New("legacy automatic binding must be a private regular file; remove it manually")
+		}
+		if err = os.Remove(legacyBinding); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	entries, e := os.ReadDir(dir)
 	if e != nil {
 		return e
@@ -87,7 +98,13 @@ func scrubLegacySessionConfigs(dir string) error {
 				secret = true
 			}
 		}
-		if secret {
+		retired := false
+		for _, cluster := range config.Clusters {
+			if cluster != nil && (strings.Contains(cluster.Server, "/k8s/sessions/") || strings.Contains(cluster.Server, "/k8s/auto/")) {
+				retired = true
+			}
+		}
+		if secret || retired {
 			if e = atomicPrivate(path, inactiveConfig); e != nil {
 				return errors.New("cannot replace legacy app-owned credential configuration")
 			}

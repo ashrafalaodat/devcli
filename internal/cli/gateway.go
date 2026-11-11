@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"devctl.local/devctl/internal/kube"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,106 +25,94 @@ type Connection struct {
 	CertificateAuthorityData string `json:"certificate_authority_data,omitempty"`
 }
 
-func (c *Client) connection(ctx context.Context, id string) (Connection, error) {
+func (c *Client) connection(ctx context.Context) (Connection, error) {
 	var out Connection
-	if !sessionID.MatchString(id) {
-		return out, errors.New("invalid session ID")
+	if err := c.request(ctx, "GET", "/v1/connection", nil, "", &out); err != nil {
+		return out, err
 	}
-	if e := c.request(ctx, "GET", sessionPath(id)+"/connection", nil, "", &out); e != nil {
-		return out, e
-	}
-	if e := validateConnection(out); e != nil {
-		return out, e
+	if err := validateConnection(out); err != nil {
+		return out, err
 	}
 	return out, nil
 }
 
 func validateConnection(connection Connection) error {
-	u, e := url.Parse(connection.Server)
-	if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return errors.New("backend returned an invalid gateway URL")
-	}
-	if u.Scheme != "https" {
-		return errors.New("Kubernetes gateway requires HTTPS, including on loopback")
+	u, err := url.Parse(connection.Server)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || u.Scheme != "https" || u.Path != "/k8s" {
+		return errors.New("backend must return a stable HTTPS gateway URL ending in /k8s")
 	}
 	return nil
 }
 
-func (c *Client) gatewayConfig(id string, connection Connection) ([]byte, error) {
-	if e := validateConnection(connection); e != nil {
-		return nil, e
+func (c *Client) gatewayConfig(connection Connection) ([]byte, error) {
+	if err := validateConnection(connection); err != nil {
+		return nil, err
 	}
-	if !sessionID.MatchString(id) {
-		return nil, errors.New("invalid session ID")
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
 	}
-	executable, e := os.Executable()
-	if e != nil {
-		return nil, e
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return nil, err
 	}
-	executable, e = filepath.Abs(executable)
-	if e != nil {
-		return nil, e
-	}
-	ca, e := base64.StdEncoding.DecodeString(connection.CertificateAuthorityData)
-	if e != nil {
+	ca, err := base64.StdEncoding.DecodeString(connection.CertificateAuthorityData)
+	if err != nil {
 		return nil, errors.New("backend returned an invalid gateway CA")
 	}
-	cfg := clientapi.NewConfig()
-	cfg.CurrentContext = id
-	cfg.Clusters["devctl"] = &clientapi.Cluster{Server: connection.Server, CertificateAuthorityData: ca}
-	cfg.Contexts[id] = &clientapi.Context{Cluster: "devctl", AuthInfo: "devctl"}
-	env, e := c.executionEnvironment()
-	if e != nil {
-		return nil, e
+	if len(ca) > 0 {
+		ca, err = kube.PublicCertificates(ca)
+		if err != nil {
+			return nil, err
+		}
 	}
-	cfg.AuthInfos["devctl"] = &clientapi.AuthInfo{Exec: &clientapi.ExecConfig{
-		APIVersion: "client.authentication.k8s.io/v1", Command: executable,
-		Args: []string{"--api", c.URL, "credential", "--session", id}, Env: env,
-		InteractiveMode: clientapi.NeverExecInteractiveMode,
-	}}
+	vars, err := c.executionEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	cfg := clientapi.NewConfig()
+	cfg.CurrentContext = "devctl"
+	cfg.Clusters["devctl"] = &clientapi.Cluster{Server: connection.Server, CertificateAuthorityData: ca}
+	cfg.Contexts["devctl"] = &clientapi.Context{Cluster: "devctl", AuthInfo: "devctl"}
+	cfg.AuthInfos["devctl"] = &clientapi.AuthInfo{Exec: &clientapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1", Command: executable, Args: []string{"--api", c.URL, "credential"}, Env: vars, InteractiveMode: clientapi.IfAvailableExecInteractiveMode}}
 	return clientcmd.Write(*cfg)
 }
 
-func (c *Client) download(ctx context.Context, id string) (string, error) {
-	path, e := c.configPath(id)
-	if e != nil {
-		return "", e
+// download refreshes public metadata at one stable path. It never selects or
+// books a cluster and never downloads the original cluster credentials.
+func (c *Client) download(ctx context.Context) (string, error) {
+	connection, err := c.connection(ctx)
+	if err != nil {
+		return "", err
 	}
-	connection, e := c.connection(ctx, id)
-	if e != nil {
-		return "", e
-	}
-	raw, e := c.gatewayConfig(id, connection)
-	if e != nil {
-		return "", e
-	}
-	if e = atomicPrivate(path, raw); e != nil {
-		return "", e
-	}
-	return path, nil
+	return c.writeGatewayConfig(ctx, connection)
 }
 
-func (c *Client) credential(ctx context.Context, id string) error {
-	if !sessionID.MatchString(id) {
-		return errors.New("invalid session ID")
+func (c *Client) writeGatewayConfig(ctx context.Context, connection Connection) (string, error) {
+	raw, err := c.gatewayConfig(connection)
+	if err != nil {
+		return "", err
 	}
-	t, e := c.Login.token(ctx)
-	if e != nil {
-		return &ExitError{3, e}
+	unlock, err := c.selectionLock(ctx)
+	if err != nil {
+		return "", err
 	}
-	// This backend check authenticates the current application identity and confirms
-	// ownership and live booking state before the token is returned to kubectl.
-	var metadata Connection
-	if e = c.withToken(ctx, t.AccessToken, "GET", sessionPath(id)+"/connection", nil, "", &metadata); e != nil {
-		return e
+	defer unlock()
+	if err = atomicPrivate(c.activePath(), raw); err != nil {
+		return "", err
 	}
-	if t.Expiry.IsZero() || !t.Expiry.After(time.Now()) || t.AccessToken == "" {
-		return &ExitError{3, errors.New("login has no valid token expiry; run devctl login")}
+	legacy := filepath.Join(c.Login.Dir, "auto-binding.json")
+	if info, e := os.Lstat(legacy); e == nil {
+		if !info.Mode().IsRegular() {
+			return "", errors.New("legacy binding must be a regular file; remove it manually")
+		}
+		if e = os.Remove(legacy); e != nil {
+			return "", e
+		}
+	} else if !os.IsNotExist(e) {
+		return "", e
 	}
-	return json.NewEncoder(c.Out).Encode(map[string]any{
-		"apiVersion": "client.authentication.k8s.io/v1", "kind": "ExecCredential",
-		"status": map[string]string{"token": t.AccessToken, "expirationTimestamp": t.Expiry.UTC().Format(time.RFC3339Nano)},
-	})
+	return c.activePath(), nil
 }
 
 func (c *Client) activePath() string { return filepath.Join(c.Login.Dir, "active-kubeconfig") }
@@ -140,52 +129,16 @@ func (c *Client) selectionLock(ctx context.Context) (func(), error) {
 	return func() { lock.Unlock() }, nil
 }
 
-func (c *Client) selectSession(ctx context.Context, id string) (string, error) {
-	path, e := c.download(ctx, id)
-	if e != nil {
-		return "", e
-	}
-	raw, e := os.ReadFile(path)
-	if e != nil {
-		return "", e
-	}
-	unlock, e := c.selectionLock(ctx)
-	if e != nil {
-		return "", e
-	}
-	defer unlock()
-	if e = atomicPrivate(c.activePath(), raw); e != nil {
-		return "", e
-	}
-	return c.activePath(), nil
-}
-
 // Keep a deliberately inactive kubeconfig instead of removing the path. Shells
 // remain pointed at devctl and never accidentally fall back to ~/.kube/config.
 var inactiveConfig = []byte("apiVersion: v1\nkind: Config\ncurrent-context: devctl-no-active-session\nclusters: []\nusers: []\ncontexts: []\n")
 
-func (c *Client) clearActive(ctx context.Context, id string) error {
-	unlock, e := c.selectionLock(ctx)
-	if e != nil {
-		return e
+func (c *Client) clearActive(ctx context.Context) error {
+	unlock, err := c.selectionLock(ctx)
+	if err != nil {
+		return err
 	}
 	defer unlock()
-	if id != "" {
-		raw, e := os.ReadFile(c.activePath())
-		if os.IsNotExist(e) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		cfg, e := clientcmd.Load(raw)
-		if e != nil {
-			return errors.New("active gateway configuration cannot be read")
-		}
-		if cfg.CurrentContext != id {
-			return nil
-		}
-	}
 	return atomicPrivate(c.activePath(), inactiveConfig)
 }
 
@@ -369,27 +322,20 @@ func (c *Client) installShell(ctx context.Context, shell, rcFile string) (string
 }
 
 func (c *Client) addGatewayCommands(root *cobra.Command) {
-	var session, automatic string
-	credential := &cobra.Command{Use: "credential", Short: "Kubernetes exec credential plugin for the devctl gateway", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		if (session == "") == (automatic == "") {
-			return errors.New("specify exactly one of --session or --auto")
-		}
-		if automatic != "" {
-			return c.automaticCredential(cmd.Context(), automatic)
-		}
-		return c.credential(cmd.Context(), session)
-	}}
-	credential.Flags().StringVar(&session, "session", "", "Active session ID")
-	credential.Flags().StringVar(&automatic, "auto", "", "Automatic booking binding ID")
+	credential := &cobra.Command{Use: "credential", Short: "Kubernetes exec authentication for your current primary cluster", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error { return c.credential(cmd.Context()) }}
 	root.AddCommand(credential)
-	c.addAutomaticCommands(root)
-	root.AddCommand(&cobra.Command{Use: "select SESSION_ID", Short: "Select gateway access for every shell using this profile", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		path, e := c.selectSession(cmd.Context(), args[0])
-		if e != nil {
-			return e
+	c.addAccessCommands(root)
+	root.AddCommand(&cobra.Command{Use: "select CLUSTER", Short: "Switch your primary booked cluster for every client", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var profile developerProfile
+		if err := c.request(cmd.Context(), "POST", "/v1/primary", map[string]string{"cluster": args[0]}, "", &profile); err != nil {
+			return err
 		}
-		return c.print(map[string]string{"session": args[0], "kubeconfig": path})
+		if _, err := c.setupGateway(cmd.Context()); err != nil {
+			return err
+		}
+		return c.print(profile)
 	}})
+
 	shell := &cobra.Command{Use: "shell", Short: "Initialize or install user-wide gateway selection for a shell"}
 	var initShell string
 	init := &cobra.Command{Use: "init", Short: "Print shell code setting KUBECONFIG to this profile's active gateway configuration", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {

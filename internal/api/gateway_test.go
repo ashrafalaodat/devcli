@@ -34,10 +34,10 @@ import (
 type gatewayAuth struct{ invalid atomic.Bool }
 
 func (a *gatewayAuth) Verify(ctx context.Context, token string) (model.Identity, error) {
-	if a.invalid.Load() || token != "alice" && token != "bob" {
+	if a.invalid.Load() || token != "alice" && token != "bob" && token != "admin" {
 		return model.Identity{}, errors.New("invalid token")
 	}
-	return model.Identity{Issuer: "https://issuer.test", Subject: token, Name: token}, nil
+	return model.Identity{Issuer: "https://issuer.test", Subject: token, Name: token, Admin: token == "admin", TokenExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
 type gatewayTest struct {
@@ -100,7 +100,7 @@ func newGateway(t *testing.T, handler http.Handler, clientCertificate bool) *gat
 	return &gatewayTest{db: db, app: app, auth: auth, frontend: front, upstream: up, session: session, alice: alice}
 }
 func (g *gatewayTest) url(path string) string {
-	return g.frontend.URL + "/k8s/sessions/" + g.session.ID + path
+	return g.frontend.URL + "/k8s" + path
 }
 func request(t *testing.T, method, address, token, body string) *http.Response {
 	t.Helper()
@@ -171,13 +171,13 @@ func TestGatewayForwardsAndKeepsSecretsOnServer(t *testing.T) {
 	if received.Header.Get("Sec-WebSocket-Protocol") != "v5.channel.k8s.io" {
 		t.Fatal("websocket bearer protocol not stripped")
 	}
-	resp = request(t, "GET", g.frontend.URL+"/v1/sessions/"+g.session.ID+"/connection", "alice", "")
+	resp = request(t, "GET", g.frontend.URL+"/v1/connection", "alice", "")
 	body = readResponse(t, resp)
 	var metadata api.Connection
 	if e = json.Unmarshal([]byte(body), &metadata); e != nil {
 		t.Fatal(e)
 	}
-	if resp.StatusCode != 200 || metadata.Server != g.app.PublicURL+"/k8s/sessions/"+g.session.ID {
+	if resp.StatusCode != 200 || metadata.Server != g.app.PublicURL+"/k8s" {
 		t.Fatal(resp.StatusCode, body)
 	}
 	if strings.Contains(body, "upstream-secret") || strings.Contains(body, g.upstream.URL) || strings.Contains(body, "PRIVATE KEY") {
@@ -209,7 +209,7 @@ func TestGatewayAuthorizationAndLease(t *testing.T) {
 		t.Fatal(e)
 	}
 	resp := request(t, "GET", g.url("/version"), "alice", "")
-	if resp.StatusCode != 409 {
+	if resp.StatusCode != 403 {
 		t.Fatal("old access token bypassed stopped reservation")
 	}
 	readResponse(t, resp)

@@ -33,9 +33,9 @@ func (patTokenAuth) Verify(_ context.Context, raw string) (model.Identity, error
 	return model.Identity{Issuer: "https://issuer.test", Subject: raw, Name: raw, Admin: raw == "admin"}, nil
 }
 
-func createPersonal(t *testing.T, g *gatewayTest, token, session string) api.PATCreation {
+func createPersonal(t *testing.T, g *gatewayTest, token string) api.PATCreation {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"session_id": session, "name": "laptop"})
+	body, _ := json.Marshal(map[string]string{"name": "laptop"})
 	r := request(t, "POST", g.frontend.URL+"/v1/pats", token, string(body))
 	defer r.Body.Close()
 	if r.StatusCode != 201 {
@@ -69,7 +69,7 @@ func TestPersonalGatewayConfigAndControlScope(t *testing.T) {
 		fmt.Fprint(w, `{"gitVersion":"v1.35.1"}`)
 	}), false)
 	g.app.Auth = patTokenAuth{}
-	p := createPersonal(t, g, "alice", g.session.ID)
+	p := createPersonal(t, g, "alice")
 	secret := personalSecret(t, p)
 	if strings.Contains(p.Kubeconfig, "upstream-secret") || strings.Contains(p.Kubeconfig, g.upstream.URL) || strings.Contains(p.Kubeconfig, "PRIVATE KEY") {
 		t.Fatal("browser config leaked original credentials")
@@ -79,8 +79,8 @@ func TestPersonalGatewayConfigAndControlScope(t *testing.T) {
 		code        int
 	}{
 		{g.url("/version"), secret, 200},
-		{g.frontend.URL + "/k8s/sessions/s-" + uuid.NewString() + "/version", secret, 401},
-		{g.frontend.URL + "/k8s/auto/a-" + uuid.NewString() + "/version", secret, 401},
+		{g.frontend.URL + "/k8s/sessions/s-" + uuid.NewString() + "/version", secret, 410},
+		{g.frontend.URL + "/k8s/auto/a-" + uuid.NewString() + "/version", secret, 410},
 		{g.frontend.URL + "/v1/whoami", secret, 401},
 		{g.frontend.URL + "/v1/pats", secret, 401},
 		{g.frontend.URL + "/v1/admin/audit", secret, 401},
@@ -109,8 +109,8 @@ func TestPersonalGatewayConfigAndControlScope(t *testing.T) {
 	}
 	r = request(t, "POST", g.frontend.URL+"/v1/pats", "bob", fmt.Sprintf(`{"session_id":%q,"name":"foreign"}`, g.session.ID))
 	readResponse(t, r)
-	if r.StatusCode != 403 {
-		t.Fatal("foreign PAT creation allowed")
+	if r.StatusCode != 400 {
+		t.Fatal("legacy session-scoped PAT creation accepted")
 	}
 	r = request(t, "DELETE", g.frontend.URL+"/v1/pats/"+p.PAT.ID, "bob", "")
 	readResponse(t, r)
@@ -151,7 +151,7 @@ func TestPersonalConfigWorksWithStockKubectl(t *testing.T) {
 	defer tlsFront.Close()
 	g.app.PublicURL = tlsFront.URL
 	g.app.GatewayCAData = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsFront.Certificate().Raw})
-	p := createPersonal(t, g, "alice", g.session.ID)
+	p := createPersonal(t, g, "alice")
 	secret := personalSecret(t, p)
 	file := filepath.Join(t.TempDir(), "gateway-config")
 	if err = os.WriteFile(file, []byte(p.Kubeconfig), 0600); err != nil {
@@ -185,7 +185,7 @@ func TestPersonalGatewayStreamRevocation(t *testing.T) {
 				w.(http.Flusher).Flush()
 				<-r.Context().Done()
 			}), false)
-			p := createPersonal(t, g, "alice", g.session.ID)
+			p := createPersonal(t, g, "alice")
 			secret := personalSecret(t, p)
 			r := request(t, "GET", g.url("/api/v1/pods?watch=true"), secret, "")
 			defer r.Body.Close()
@@ -236,7 +236,7 @@ func TestPersonalGatewayDuplexRevocation(t *testing.T) {
 		rw.Flush()
 		io.Copy(conn, rw)
 	}), false)
-	p := createPersonal(t, g, "alice", g.session.ID)
+	p := createPersonal(t, g, "alice")
 	secret := personalSecret(t, p)
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(g.frontend.URL, "http://"), time.Second)
 	if err != nil {

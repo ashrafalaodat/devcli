@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,12 +21,11 @@ type PATCreation struct {
 
 func (s *Server) createPAT(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		SessionID string `json:"session_id"`
-		Name      string `json:"name"`
-		TTL       string `json:"ttl"`
+		Name string `json:"name"`
+		TTL  string `json:"ttl"`
 	}
-	if err := decode(w, r, &b); err != nil || !gatewaySessionID.MatchString(b.SessionID) || strings.TrimSpace(b.Name) == "" || len(b.Name) > 100 {
-		fail(w, http.StatusBadRequest, "session_id and credential name (1 through 100 bytes) required")
+	if err := decode(w, r, &b); err != nil || strings.TrimSpace(b.Name) == "" || len(b.Name) > 100 {
+		fail(w, http.StatusBadRequest, "credential name (1 through 100 bytes) required; PATs follow your primary cluster")
 		return
 	}
 	ttl := store.DefaultPATDuration
@@ -52,14 +50,14 @@ func (s *Server) createPAT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	metadata, secret, err := s.Store.CreatePAT(r.Context(), user(r), b.SessionID, b.Name, ttl)
+	metadata, secret, err := s.Store.CreatePAT(r.Context(), user(r), b.Name, ttl)
 	if err != nil {
 		respond(w, err, nil)
 		return
 	}
 	cfg := clientapi.NewConfig()
 	cfg.CurrentContext = "devctl"
-	cfg.Clusters["devctl-gateway"] = &clientapi.Cluster{Server: strings.TrimSuffix(s.PublicURL, "/") + "/k8s/sessions/" + url.PathEscape(b.SessionID), CertificateAuthorityData: ca}
+	cfg.Clusters["devctl-gateway"] = &clientapi.Cluster{Server: strings.TrimSuffix(s.PublicURL, "/") + "/k8s", CertificateAuthorityData: ca}
 	cfg.AuthInfos["devctl-personal-access"] = &clientapi.AuthInfo{Token: secret}
 	cfg.Contexts["devctl"] = &clientapi.Context{Cluster: "devctl-gateway", AuthInfo: "devctl-personal-access"}
 	raw, err := clientcmd.Write(*cfg)

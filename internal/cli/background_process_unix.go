@@ -7,6 +7,6 @@ import (
 	"syscall"
 )
 
-func configureAutomaticProcess(command *exec.Cmd) {
+func configureBackgroundProcess(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }

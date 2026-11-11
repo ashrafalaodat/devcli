@@ -22,12 +22,11 @@ const MaximumPATDuration = 7 * 24 * time.Hour
 var validPAT = regexp.MustCompile(`^dcpat_[A-Za-z0-9_-]{43}$`)
 
 // PAT is public metadata. The digest and one-time secret are never part of it.
-// A PAT grants Kubernetes gateway access to exactly one recorded session. It
+// A PAT grants gateway access to its developer's current primary booking. It
 // cannot authenticate to the control API, carry administrator rights or renew.
 type PAT struct {
 	ID         string     `json:"id"`
 	Owner      string     `json:"owner"`
-	SessionID  string     `json:"session_id"`
 	Name       string     `json:"name"`
 	Scope      string     `json:"scope"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -36,7 +35,7 @@ type PAT struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
-func (s *Store) CreatePAT(ctx context.Context, u model.Identity, sessionID, name string, ttl time.Duration) (PAT, string, error) {
+func (s *Store) CreatePAT(ctx context.Context, u model.Identity, name string, ttl time.Duration) (PAT, string, error) {
 	var out PAT
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 {
@@ -58,26 +57,14 @@ func (s *Store) CreatePAT(ctx context.Context, u model.Identity, sessionID, name
 		if err := t.expire(ctx); err != nil {
 			return err
 		}
-		var owner, state string
-		var expiry *time.Time
-		if err := t.QueryRow(ctx, "SELECT owner_id,state,expires_at FROM sessions WHERE id=$1", sessionID).Scan(&owner, &state, &expiry); err != nil {
+		if err := t.ensureDeveloper(ctx, u); err != nil {
 			return err
-		}
-		if owner != u.Key() {
-			return ErrForbidden
 		}
 		now, err := t.now(ctx)
 		if err != nil {
 			return err
 		}
-		if state != "ACTIVE" || expiry != nil && !expiry.After(now) {
-			return ErrConflict
-		}
-		end := now.Add(ttl)
-		if expiry != nil && expiry.Before(end) {
-			end = *expiry
-		}
-		out = PAT{ID: "p-" + uuid.NewString(), Owner: u.Key(), SessionID: sessionID, Name: name, Scope: "kubernetes:session", CreatedAt: now, ExpiresAt: end}
+		out = PAT{ID: "p-" + uuid.NewString(), Owner: u.Key(), Name: name, Scope: "kubernetes:primary", CreatedAt: now, ExpiresAt: now.Add(ttl)}
 		identity := u
 		identity.Admin = false
 		identity.TokenExpiresAt = time.Time{}
@@ -85,10 +72,10 @@ func (s *Store) CreatePAT(ctx context.Context, u model.Identity, sessionID, name
 		if err != nil {
 			return err
 		}
-		if _, err = t.Exec(ctx, "INSERT INTO personal_access_tokens(id,owner_id,session_id,name,token_digest,identity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", out.ID, out.Owner, out.SessionID, out.Name, digest[:], identityJSON, out.CreatedAt, out.ExpiresAt); err != nil {
+		if _, err = t.Exec(ctx, "INSERT INTO personal_access_tokens(id,owner_id,name,scope,token_digest,identity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", out.ID, out.Owner, out.Name, out.Scope, digest[:], identityJSON, out.CreatedAt, out.ExpiresAt); err != nil {
 			return err
 		}
-		return t.audit(ctx, u.Key(), "pat_create", out.ID, "one-time gateway credential issued for session "+sessionID+"; no control API or administrator access")
+		return t.audit(ctx, u.Key(), "pat_create", out.ID, "one-time developer primary gateway credential issued; no control API or administrator access")
 	})
 	if err != nil {
 		return PAT{}, "", err
@@ -100,15 +87,15 @@ func (s *Store) PATs(ctx context.Context, u model.Identity, all bool) ([]PAT, er
 	if all && !u.Admin {
 		return nil, ErrForbidden
 	}
-	rows, err := s.Pool.Query(ctx, "SELECT id,owner_id,session_id,name,created_at,expires_at,revoked_at,last_used_at FROM personal_access_tokens WHERE ($1 OR owner_id=$2) ORDER BY created_at DESC,id LIMIT 500", all, u.Key())
+	rows, err := s.Pool.Query(ctx, "SELECT id,owner_id,name,scope,created_at,expires_at,revoked_at,last_used_at FROM personal_access_tokens WHERE ($1 OR owner_id=$2) ORDER BY created_at DESC,id LIMIT 500", all, u.Key())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []PAT{}
 	for rows.Next() {
-		v := PAT{Scope: "kubernetes:session"}
-		if err := rows.Scan(&v.ID, &v.Owner, &v.SessionID, &v.Name, &v.CreatedAt, &v.ExpiresAt, &v.RevokedAt, &v.LastUsedAt); err != nil {
+		v := PAT{}
+		if err := rows.Scan(&v.ID, &v.Owner, &v.Name, &v.Scope, &v.CreatedAt, &v.ExpiresAt, &v.RevokedAt, &v.LastUsedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -143,10 +130,10 @@ func (s *Store) RevokePAT(ctx context.Context, u model.Identity, id, reason stri
 	})
 }
 
-// VerifyPAT is used only by the Kubernetes gateway. It rechecks the exact
-// session, expiry and revocation for new requests and existing streams. The
+// VerifyPAT is used only by the Kubernetes gateway. It rechecks expiry and
+// revocation; primary ownership and selection are checked independently. The
 // secret is never persisted, returned or passed upstream.
-func (s *Store) VerifyPAT(ctx context.Context, raw, sessionID string) (model.Identity, error) {
+func (s *Store) VerifyPAT(ctx context.Context, raw string) (model.Identity, error) {
 	var u model.Identity
 	if !validPAT.MatchString(raw) {
 		return u, ErrForbidden
@@ -154,11 +141,9 @@ func (s *Store) VerifyPAT(ctx context.Context, raw, sessionID string) (model.Ide
 	digest := sha256.Sum256([]byte(raw))
 	var id, owner string
 	var identityJSON []byte
-	err := s.Pool.QueryRow(ctx, `SELECT p.id,p.owner_id,p.identity,p.expires_at
-FROM personal_access_tokens p JOIN sessions s ON s.id=p.session_id
-WHERE p.token_digest=$1 AND p.session_id=$2 AND p.revoked_at IS NULL
- AND p.expires_at>clock_timestamp() AND s.owner_id=p.owner_id
- AND s.state='ACTIVE' AND (s.expires_at IS NULL OR s.expires_at>clock_timestamp())`, digest[:], sessionID).Scan(&id, &owner, &identityJSON, &u.TokenExpiresAt)
+	err := s.Pool.QueryRow(ctx, `SELECT id,owner_id,identity,expires_at
+FROM personal_access_tokens WHERE token_digest=$1 AND scope='kubernetes:primary'
+ AND revoked_at IS NULL AND expires_at>clock_timestamp()`, digest[:]).Scan(&id, &owner, &identityJSON, &u.TokenExpiresAt)
 	if err != nil {
 		return model.Identity{}, err
 	}

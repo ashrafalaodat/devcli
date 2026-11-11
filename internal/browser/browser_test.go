@@ -368,7 +368,7 @@ func TestBrowserCookieAPIAndLogout(t *testing.T) {
 	if json.Unmarshal(w.Body.Bytes(), &booking) != nil {
 		t.Fatal("invalid booking response")
 	}
-	_, secret, err := b.db.CreatePAT(t.Context(), metadata.User, booking.ID, "browser test", time.Hour)
+	_, secret, err := b.db.CreatePAT(t.Context(), metadata.User, "browser test", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestBrowserCookieAPIAndLogout(t *testing.T) {
 	if err = b.db.Access(t.Context(), metadata.User, booking.ID); err == nil {
 		t.Fatal("logout retained booking access")
 	}
-	if _, err = b.db.VerifyPAT(t.Context(), secret, booking.ID); err == nil {
+	if _, err = b.db.VerifyPAT(t.Context(), secret); err == nil {
 		t.Fatal("logout retained PAT access")
 	}
 	if w := browserCall(b.h, c, "GET", "/web/session", "", "", ""); w.Code != 401 {
