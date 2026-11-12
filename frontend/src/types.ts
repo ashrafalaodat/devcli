@@ -105,7 +105,7 @@ export interface ApiOptions {
 }
 export type ApiClient = <T = unknown>(path: string, options?: ApiOptions) => Promise<T>;
 export type Notify = (message: string, error?: boolean) => void;
-export type Section = 'overview' | 'clusters' | 'access' | 'admin';
+export type Section = 'overview' | 'clusters' | 'access' | 'admin-clusters' | 'admin-people' | 'admin-tokens' | 'admin-audit';
 
 export interface PageProps {
   data: Workspace;

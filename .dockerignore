@@ -3,6 +3,8 @@
 /config
 bin
 dist
+# Local design-review images, exports and static prototypes are not runtime assets.
+design
 **/node_modules
 .git
 .env

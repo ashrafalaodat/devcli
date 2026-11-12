@@ -1,5 +1,32 @@
 # Gateway verification record
 
+## 2026-11-12: approved Slate interface
+
+Implemented and tested:
+
+- Applied the user's approved Concept A to the real React UI: light surfaces, navy sidebar, blue actions, persistent primary context, a focused workspace and functional cluster search/filters. Split administration into cluster registry, people/policy, organisation tokens and audit views. Audit filters explicitly cover the latest100 loaded records. Added focused booking, credential-creation, token-policy, registration, maintenance, limit, release and deregistration forms without changing API contracts or the database schema.
+- Added shared native modal dialogs with labelled headings, initial focus, Tab containment, inert background, Escape/close handling, focus return and busy guards. Replaced browser confirm/prompt boxes with scoped confirmations and audited forms. Linked field errors to their inputs and kept values on recoverable failures. Mobile records retain selection, release, policy and revocation actions; both developer and administrator navigation remain available on narrow screens. Production CSP stays strict, with no inline-style exception or new dependency.
+- Preserved booking retry idempotency, identity-wide primary, ordered snapshots, default booking limits, controller-only sharing, independently expiring PATs and per-primary inactivity. The test now also proves catalogue sharing preselects the requested cluster, a joining developer cannot change the controller's sharing policy, closing new joins retains existing holders, and release/logout leave the other holder's reservation intact. PAT download/import contents remain transient values outside React state and browser storage.
+- Fixed an authentication-loss race discovered during final review: a pending outer confirmation could otherwise remain open after a presence401 removed its workspace. Authentication clearing now cancels and resolves that confirmation as declined. A real trusted key event inside a pending release dialog triggered the typed presence request's401; the test proved Welcome became focusable, dialogs/body lock cleared, no stale release/logout was sent and exact booking/PAT snapshots remained. Normal logout then separately proved the intended release/PAT behavior.
+- Rendered the actual production React bundle under its strict CSP using isolated fictional data. Reviewed desktop workspace, catalogue, drawers, sign-in and all admin views, plus390px workspace/access records. Visual checks caught and corrected native-button backgrounds, a progress-segment/empty-state CSS collision, small metadata wrapping and sign-in spacing. Screenshots in `docs/screenshots/` contain only fixture data. No normal user session or registered remote Kubernetes endpoint was used for these captures.
+- Rebuilt and restarted only the verified local host backend. HTTPS9090 readiness passed, its served JavaScript hash equals the final built bundle and strict CSP is present. Read-only metadata remains schema8 with4 live registrations and4 encrypted credentials. PostgreSQL/normal Keycloak containers were preserved. No registered remote cluster was contacted or modified.
+
+Commands actually executed (`TMPDIR`/`GOTMPDIR` used `/local/workspace/devctl-tmp`; npm used the local cache):
+
+| Command | Result |
+| --- | --- |
+| `make build test frontend-test` | Passed; strict TypeScript,13 frontend unit cases, Go race suite, production build and complete headless UI contracts. External-service cases skip without their configuration |
+| `node internal/webui/testdata/primary-ui.cjs` | Passed; final focused suite10.17s including pending-confirmation401. The final Make run also passed this expanded suite |
+| `make demo-test` | Passed; real PostgreSQL isolated-schema suites (API14.926s, store13.631s), then real Keycloak/CLI/native kubectl integration25.368s (manual7.70s, stable-primary16.64s). Browser cases skipped here and ran separately below |
+| `./scripts/browser-test.sh` | Passed5.902s; disposable Keycloak browser/PAT flow3.03s and automatic-booking/browser/CLI flow1.85s, using isolated schemas and TLS protocol fixtures |
+| `node .demo/slate-visual.cjs` | Passed; private isolated UI fixture captured14 desktop/mobile screens with no JavaScript or page-overflow failures and no external/registered-cluster requests |
+| `go vet ./...`, JavaScript/shell syntax and `git diff --check` | Passed |
+| `docker buildx build --check --progress plain .` | Passed; no warnings. Local design-review exports are excluded from the build context |
+| `./scripts/package-client.sh` | Passed; Linux full-CLI archive rebuilt |
+| Verified host restart, HTTPS `/readyz`, served-bundle hash/CSP and schema/registry counts | Passed; final Slate UI served on9090, schema8 and4 registrations/credentials preserved |
+
+Implemented but not deployment-tested: full container image build/runtime, formal screen-reader and full WCAG conformance review, non-Linux browsers/keyrings, corporate OIDC and production proxies/load. The host production build and local browser keyboard/modal/mobile checks above passed. The container recipe was validated without rebuilding the application image because its Docker filesystem is nearly full; no unrelated Docker data was removed. Real Kubernetes workload behavior remains outside these local protocol fixtures. Existing coordination-only limitations—upstream privilege isolation, workload/storage cleanup, resource accounting and queueing—remain deferred. [ADR010](adr-010.md) records the approved implementation.
+
 ## 2026-11-12: React and TypeScript frontend
 
 Implemented and tested:

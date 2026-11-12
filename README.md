@@ -28,7 +28,7 @@ Original Kubernetes kubeconfigs remain on the backend. The gateway uses the impo
 
 Booking duration and manual renewal have been removed. Omit `--ttl` from `devctl start`; `devctl renew` and the old session-renewal API are retired. Existing active reservations receive one full inactivity grace window during migration, without resetting it on backend restart. The API’s `expires_at` now reports the current auto-release deadline, which moves with qualifying activity. PAT/access-token lifetimes remain independent.
 
-Administrators can update the policy with `devctl admin settings --inactive-grace 4h --reason 'Team inactivity policy'` or in **Administration → Booking policy**. Changes apply to current and future bookings; shortening the period may release already-idle reservations. [ADR006](docs/adr-006.md) records the activity rules.
+Administrators can update the policy with `devctl admin settings --inactive-grace 4h --reason 'Team inactivity policy'` or in **Administration → People & policy**. Changes apply to current and future bookings; shortening the period may release already-idle reservations. [ADR006](docs/adr-006.md) records the activity rules.
 
 ## Upgrade from session-specific kubeconfigs
 
@@ -78,6 +78,12 @@ ssh -L 9090:127.0.0.1:9090 \
 Open the exact **https://127.0.0.1:9090/** address in the laptop browser and trust only the public `.demo/tls/ca.crt`. The browser flow uses ports 9090 and 8081; port 18000 is the CLI loopback callback. In the remote terminal, set `DEVCTL_NO_BROWSER=1`, then open the printed login URL unchanged on the laptop. Use the same browser and host throughout a login. Callback ports support one CLI browser login at a time.
 
 ## Frontend development
+
+The browser uses the approved **Slate** design: a light workspace, navy navigation and blue primary actions. The current primary cluster stays visible, booking and personal-config creation use focused drawers, and mobile records retain their controls. Administrators have separate cluster-registry, people/policy, organisation-token and audit views. Confirmation dialogs explain scope and consequences before release, selection or sign-out. [ADR010](docs/adr-010.md) records the implementation.
+
+![Slate workspace with fictional development-cluster data](docs/screenshots/slate-workspace.png)
+
+This screenshot uses isolated test data. The interface reports reservation availability rather than Kubernetes health or capacity.
 
 The frontend source lives in `frontend/src/`: React components for overview, clusters, access/tokens and administration, typed API models and a presence hook. Vite provides the development environment and React Fast Refresh. To edit the UI with live reload, use two terminals:
 
@@ -189,20 +195,22 @@ In **Access & tokens**, enable automatic booking when creating a credential and 
 
 If the owner already has a primary, the gateway uses it regardless of this PAT’s selector. Otherwise an enabled, valid PAT transactionally reserves the first unused, nonmaintenance registered cluster matching every saved label, makes it primary and forwards the request. It never joins another developer’s shared booking automatically. Unused means no active devctl reservation; the backend does not inspect or remove Kubernetes workloads left behind. An empty selector permits any unused cluster. No matching capacity returns an actionable kubectl error; there is no queue, cluster creation or fallback outside the selector. Concurrent first requests share one reservation across backend instances. Administrator booking limits and normal inactivity expiry still apply.
 
-Use **Your gateway tokens → Edit automatic booking** or `devctl token update PAT_ID` to change the enabled setting or replace/clear the selector. Changes are saved server-side and apply to the next allocation. The PAT ID, token, expiry and downloaded kubeconfig stay unchanged, and an existing primary is not switched or released. Owners edit their own records through SSO; administrators can edit another developer’s record with an audit reason (`--reason` in the CLI). Expired/revoked credentials cannot be edited. The same PAT cannot authenticate to its control endpoint.
+Use **Access & tokens → Your personal tokens → Edit policy** or `devctl token update PAT_ID` to change the enabled setting or replace/clear the selector. Changes are saved server-side and apply to the next allocation. The PAT ID, token, expiry and downloaded kubeconfig stay unchanged, and an existing primary is not switched or released. Owners edit their own records through SSO; administrators can edit another developer’s record with an audit reason (`--reason` in the CLI). Expired/revoked credentials cannot be edited. The same PAT cannot authenticate to its control endpoint.
 
 Automatic booking is off for existing and newly issued PATs unless explicitly enabled. A valid enabled PAT can book again after stop, inactivity expiry or logout on a later Kubernetes request; disable its automatic-booking setting or revoke it to prevent that capability. Already open streams for the ended booking close normally and are never migrated. The separate kubectl subcommand client has been removed; use the full CLI or browser. [ADR008](docs/adr-008.md) records the decision.
 
 ## Administration
 
-Sign in as `admin` and open **Administration**. Administrators can:
+Sign in as `admin`; administrator navigation appears in the sidebar and on mobile. Use **Cluster registry**, **People & policy**, **Organisation tokens** or **Audit log** for the corresponding task. Administrators can:
 
 - Set the default maximum held clusters, initially one, and the release-after-inactivity period, initially four hours, with an audit reason.
 - Set a developer override or clear it to inherit the default. The view shows held counts, effective limits and primary selections. Developers appear after their first application login.
 - Register an approved static kubeconfig, which is encrypted before storage. Registration and booking do not contact or modify Kubernetes.
 - Enable/disable maintenance, release bookings and revoke another user's PAT with an audit reason.
-- Deregister an unused cluster from **Administration → Cluster placement controls** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
+- Deregister an unused cluster from **Administration → Cluster registry** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
 - Inspect allocation and administration audit records. Credential values are never displayed.
+
+Search and filters operate on data already loaded in the current view. Audit filtering covers the latest100 returned events, rather than a server-side search of the complete history. Forms retain entered values after recoverable errors, and an unchanged booking retry retains its idempotency key.
 
 Lower booking-count limits never evict holders. Inactivity-period changes update current deadlines from their last activity; shortening the period can release idle bookings. Maintenance blocks new placement without ending current reservations. Administrative release updates primary selection using the same safe application state path as owner release; no Kubernetes workloads are removed.
 
