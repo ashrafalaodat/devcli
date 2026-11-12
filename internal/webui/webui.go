@@ -13,18 +13,23 @@ var assets embed.FS
 
 // Handler serves named application assets without directory listings.
 func Handler() http.Handler {
+	handler, _ := NewHandler("")
+	return handler
+}
+
+// NewHandler serves embedded production assets or, only when explicitly
+// configured, public frontend modules from a loopback development server.
+func NewHandler(devURL string) (http.Handler, error) {
+	if devURL != "" {
+		return developmentHandler(devURL)
+	}
 	files := map[string]struct{ path, contentType string }{
 		"/":               {"assets/index.html", "text/html; charset=utf-8"},
 		"/assets/app.css": {"assets/app.css", "text/css; charset=utf-8"},
 		"/assets/app.js":  {"assets/app.js", "text/javascript; charset=utf-8"},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		assetHeaders(w.Header(), false)
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -44,5 +49,5 @@ func Handler() http.Handler {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write(body)
 		}
-	})
+	}), nil
 }

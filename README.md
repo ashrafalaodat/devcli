@@ -1,6 +1,6 @@
 # devctl
 
-A Go backend, developer CLI and browser UI for reserving existing Kubernetes clusters through an authenticated gateway. PostgreSQL stores reservations, developer limits, primary selections, audit records and encrypted upstream kubeconfigs. Experimental SSO uses OIDC Authorization Code with PKCE and local Keycloak.
+A Go backend and developer CLI, with a React and TypeScript browser UI, for reserving existing Kubernetes clusters through an authenticated gateway. PostgreSQL stores reservations, developer limits, primary selections, audit records and encrypted upstream kubeconfigs. Experimental SSO uses OIDC Authorization Code with PKCE and local Keycloak.
 
 Each developer has **one primary cluster** and one stable gateway kubeconfig. Administrators control how many clusters a developer can hold; the default is **one**. After an administrator permits additional bookings, a developer can book more clusters and switch the primary selection without changing or downloading the kubeconfig again.
 
@@ -41,7 +41,7 @@ After this one-time update, keep the same config across cluster selections and n
 
 ## Local setup
 
-Prerequisites: Go 1.26, Docker with Compose, curl and OpenSSL. Integration tests also need kubectl; browser integration uses Python 3 to prepare a disposable realm. Linux is the tested platform.
+Prerequisites: Go 1.26, Node.js 22.12 or later, npm, Docker with Compose, curl and OpenSSL. Integration tests also need kubectl; browser integration uses Python 3 to prepare a disposable realm. Linux is the tested platform. Frontend dependencies are pinned in `frontend/package-lock.json`: React19.3.1, TypeScript7.0.2 and Vite8.3.8. The migration was tested with Node22.20.0 and npm11.19.0.
 
 ```bash
 cd /repo/devcli
@@ -76,6 +76,33 @@ ssh -L 9090:127.0.0.1:9090 \
 ```
 
 Open the exact **https://127.0.0.1:9090/** address in the laptop browser and trust only the public `.demo/tls/ca.crt`. The browser flow uses ports 9090 and 8081; port 18000 is the CLI loopback callback. In the remote terminal, set `DEVCTL_NO_BROWSER=1`, then open the printed login URL unchanged on the laptop. Use the same browser and host throughout a login. Callback ports support one CLI browser login at a time.
+
+## Frontend development
+
+The frontend source lives in `frontend/src/`: React components for overview, clusters, access/tokens and administration, typed API models and a presence hook. Vite provides the development environment and React Fast Refresh. To edit the UI with live reload, use two terminals:
+
+```bash
+# Terminal 1: install pinned dependencies and start Vite on loopback port 5173
+make frontend-dev
+
+# Terminal 2: start the backend with its development asset proxy enabled
+DEVCTL_FRONTEND_DEV_URL=http://127.0.0.1:5173 make demo-up
+```
+
+Open **https://127.0.0.1:9090/**, including when using the SSH tunnel above. Go proxies frontend source and the HMR WebSocket to Vite; authentication, cookies, CSRF, API calls and the Kubernetes gateway retain their existing HTTPS origin. Opening port5173 directly is not the application login flow. The proxy requires a loopback listener, public origin and Vite target. It is disabled unless explicitly configured.
+
+For a different backend development port, copy `frontend/.env.example` to `frontend/.env.local` and set `DEVCTL_FRONTEND_PUBLIC_ORIGIN` to that exact HTTPS origin, then restart Vite. Also update the backend public/listen settings and approved OIDC redirect; the frontend setting alone does not configure them. This variable controls development HMR connection settings, not credentials. Never put tokens, kubeconfigs or secrets in frontend environment variables or `VITE_*` values, which can be visible to browsers.
+
+```bash
+make frontend-check  # strict TypeScript and API/label unit tests
+make frontend-test   # production build and headless browser regressions
+make frontend-build  # regenerate the three embedded production assets
+make build           # build frontend first, then Go CLI/backend
+```
+
+Headless tests use installed Google Chrome when available, or Playwright Chromium. Install Chromium if necessary with `cd frontend && npm exec playwright install chromium`. The production browser suite verifies the restrictive CSP as well as developer/admin behavior, PAT policies, activity, sign-out and mobile layout.
+
+For normal operation, unset `DEVCTL_FRONTEND_DEV_URL` and run `make demo-up` again. Production serves only the embedded React bundle and retains the strict production CSP; no Vite or Node process is needed at runtime. Generated `internal/webui/assets/` files are tracked so Go-only consumers can still build the checked-in UI with `make backend-build`. Edit TypeScript/CSS source and regenerate these files before committing. The container build also builds the frontend before compiling Go. See [ADR009](docs/adr-009.md).
 
 ## Two ways to connect
 
@@ -237,6 +264,7 @@ Run `make demo-up` first. Tests use uniquely named PostgreSQL schemas and dispos
 | `DEVCTL_WEB_CLIENT_ID` | Browser OIDC client, default `devctl-web` |
 | `DEVCTL_WEB_CLIENT_SECRET` | Optional confidential web-client secret; backend only |
 | `DEVCTL_WEB_SESSION_TTL` | Browser absolute lifetime, default `8h`, range `1m` through `168h` |
+| `DEVCTL_FRONTEND_DEV_URL` | Optional loopback Vite origin, e.g. `http://127.0.0.1:5173`; development only, unset in production |
 | `DEVCTL_DEV_HTTP=1` | Development-only loopback HTTP issuer allowance |
 
 The reservation inactivity period is a durable administrator setting, not a token lifetime or environment variable. `devctl admin settings` displays `inactivity_grace_period` and the default booking count. Reservation activity and expiry are persisted in PostgreSQL; backend restarts resume expiry checks.

@@ -7,6 +7,7 @@ import (
 	"devctl.local/devctl/internal/browser"
 	"devctl.local/devctl/internal/kube"
 	"devctl.local/devctl/internal/store"
+	"devctl.local/devctl/internal/webui"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,11 @@ func main() {
 func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	addr := env("DEVCTL_LISTEN", "127.0.0.1:9090")
+	frontendDevURL := os.Getenv("DEVCTL_FRONTEND_DEV_URL")
+	if e := validateFrontendDevelopmentListener(addr, frontendDevURL); e != nil {
+		return e
+	}
 	issuer := env("DEVCTL_ISSUER", "http://127.0.0.1:8081/realms/devctl")
 	cfg := auth.DefaultConfig(issuer)
 	if raw := os.Getenv("DEVCTL_OIDC_CONFIG"); raw != "" {
@@ -67,7 +73,6 @@ func run() error {
 		return e
 	}
 	defer db.Pool.Close()
-	addr := env("DEVCTL_LISTEN", "127.0.0.1:9090")
 	host, _, e := net.SplitHostPort(addr)
 	if e != nil {
 		return e
@@ -107,7 +112,7 @@ func run() error {
 		return errors.New("invalid DEVCTL_WEB_SESSION_TTL")
 	}
 	core := (&api.Server{Store: db, Auth: verifier, Vault: vault, PublicURL: publicURL, GatewayCAData: gatewayCA, GatewayRecheckInterval: recheck}).Handler()
-	handler, e := browser.New(browser.Config{PublicURL: publicURL, ClientID: env("DEVCTL_WEB_CLIENT_ID", "devctl-web"), ClientSecret: os.Getenv("DEVCTL_WEB_CLIENT_SECRET"), SessionTTL: webTTL}, verifier, db, vault, core)
+	handler, e := browser.New(browser.Config{PublicURL: publicURL, ClientID: env("DEVCTL_WEB_CLIENT_ID", "devctl-web"), ClientSecret: os.Getenv("DEVCTL_WEB_CLIENT_SECRET"), SessionTTL: webTTL, FrontendDevURL: frontendDevURL}, verifier, db, vault, core)
 	if e != nil {
 		return e
 	}
@@ -148,4 +153,18 @@ func run() error {
 		return nil
 	}
 	return e
+}
+
+func validateFrontendDevelopmentListener(addr, frontendDevURL string) error {
+	if frontendDevURL == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || !webui.IsLoopbackHost(host) {
+		return errors.New("DEVCTL_FRONTEND_DEV_URL requires a loopback DEVCTL_LISTEN address")
+	}
+	if _, err := webui.NewHandler(frontendDevURL); err != nil {
+		return err
+	}
+	return nil
 }

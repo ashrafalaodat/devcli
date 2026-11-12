@@ -1,9 +1,26 @@
-.PHONY: build test test-db demo-up demo-test browser-test demo-down client-package fmt
-build:
+.DEFAULT_GOAL := build
+
+.PHONY: build backend-build test test-db frontend-install frontend-build frontend-check frontend-test frontend-dev demo-up demo-test browser-test demo-down client-package fmt
+frontend/node_modules/.devctl-dependencies: frontend/package.json frontend/package-lock.json
+	npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
+	touch $@
+frontend-install: frontend/node_modules/.devctl-dependencies
+frontend-build: frontend-install
+	npm --prefix frontend run build
+frontend-check: frontend-install
+	npm --prefix frontend run typecheck
+	npm --prefix frontend test
+frontend-test: frontend-build frontend-check
+	npm --prefix frontend run test:ui
+frontend-dev: frontend-install
+	npm --prefix frontend run dev
+build: frontend-build
+	$(MAKE) backend-build
+backend-build:
 	mkdir -p bin
 	go build -buildvcs=false -trimpath -o bin/devctl ./cmd/devctl
 	go build -buildvcs=false -trimpath -o bin/devctld ./cmd/devctld
-test:
+test: frontend-check
 	./scripts/demo-env-test.sh
 	go test -race ./...
 test-db:

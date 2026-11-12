@@ -32,6 +32,7 @@ const loginCookie = "__Host-devctl-login"
 
 type Config struct {
 	PublicURL, ClientID, ClientSecret string
+	FrontendDevURL                    string
 	SessionTTL                        time.Duration
 }
 
@@ -54,8 +55,15 @@ type credentials struct {
 
 func New(c Config, verifier *auth.Verifier, db *store.Store, vault *kube.Vault, next http.Handler) (*Handler, error) {
 	origin, err := url.Parse(c.PublicURL)
-	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") || c.ClientID == "" {
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawPath != "" || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") || c.ClientID == "" {
 		return nil, errors.New("browser access requires a public HTTPS origin and a web OIDC client ID")
+	}
+	if c.FrontendDevURL != "" && !webui.IsLoopbackHost(origin.Hostname()) {
+		return nil, errors.New("frontend development mode requires a loopback public HTTPS origin")
+	}
+	assets, err := webui.NewHandler(c.FrontendDevURL)
+	if err != nil {
+		return nil, err
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 8 * time.Hour
@@ -72,7 +80,7 @@ func New(c Config, verifier *auth.Verifier, db *store.Store, vault *kube.Vault, 
 	if err = verifier.Provider.Claims(&discovery); err != nil {
 		return nil, err
 	}
-	return &Handler{config: c, oauth: oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: endpoint, RedirectURL: c.PublicURL + "/auth/callback", Scopes: verifier.Config.Scopes}, idVerifier: verifier.Provider.Verifier(&oidc.Config{ClientID: c.ClientID}), verifier: verifier, store: db, vault: vault, next: next, assets: webui.Handler(), revocationURL: discovery.Revocation}, nil
+	return &Handler{config: c, oauth: oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: endpoint, RedirectURL: c.PublicURL + "/auth/callback", Scopes: verifier.Config.Scopes}, idVerifier: verifier.Provider.Verifier(&oidc.Config{ClientID: c.ClientID}), verifier: verifier, store: db, vault: vault, next: next, assets: assets, revocationURL: discovery.Revocation}, nil
 }
 
 func random() (string, error) {
@@ -107,7 +115,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 	switch {
-	case r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/assets/"):
+	case webui.IsAssetPath(r.URL.Path, h.config.FrontendDevURL != ""):
 		h.assets.ServeHTTP(w, r)
 	case r.URL.Path == "/auth/login" && r.Method == http.MethodGet:
 		h.login(w, r)

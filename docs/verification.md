@@ -1,5 +1,33 @@
 # Gateway verification record
 
+## 2026-11-12: React and TypeScript frontend
+
+Implemented and tested:
+
+- Replaced the imperative HTML/JavaScript client with functional React pages in `frontend/src/`, strict TypeScript models, shared controls, a typed CSRF-aware API client and the interaction-based presence hook. Overview, booking, sharing, primary selection, cluster listing, token creation/download/revocation/preferences and all administrator controls retain their existing backend contracts. This is the browser implementation itself, rather than a React wrapper around the previous DOM script.
+- Pinned React/React DOM19.3.1, TypeScript7.0.2, Vite8.3.8, React Vite plugin6.3.0 and Playwright1.65.0 with a committed npm lockfile. Local verification used Go1.26.0, Node22.20.0, npm11.19.0 and installed headless Google Chrome. Make installs with `npm ci`, checks types, tests the API/label helpers and generates the embedded production bundle before compiling Go. The container recipe has a pinned Node build stage; the final runtime still serves the embedded assets without Node. The three generated assets remain tracked for direct Go-only builds.
+- Added an explicitly enabled, loopback-only Vite asset/HMR proxy. The browser continues using the backend's verified HTTPS origin, preserving OIDC callbacks, secure cookies, CSRF and API routing. Tests cover listener/public/target restrictions, normal TLS verification, private/traversal path rejection, exact module allowlists, request credential stripping, discarded response cookies, restricted methods/upgrades and production versus development CSP. Actual Vite8 required its exact `node_modules/vite/dist/client/env.mjs` import path; that path was added and tested without opening arbitrary dependencies or filesystem access.
+- Thirteen frontend unit tests verify credential/header handling, malformed and failed responses, unauthorized cleanup, label parsing and empty-value distinctions. Headless Chrome executes the real production React bundle under the strict production CSP and exercises developer and administrator actions, idle-safe presence, PAT/logout behavior, editable automatic booking, foreign-owner/error guards, transient credential handling, text escaping and mobile layout. Expanded tests cover registration/import, maintenance and force release with audit reasons, validation, pending/error/retry states and confirmations.
+- Fixed a refresh-ordering race discovered during migration review. Mutation refreshes now queue a fresh read behind any older request, and sign-out generations discard stale results. A held-response browser regression proves switching primary is followed by a new authoritative snapshot. Activity also schedules correction behind a pending read so an old snapshot cannot leave a stale inactivity deadline.
+- A separate local smoke fixture ran actual Vite and the Go development asset proxy over verified TLS. Headless Chrome loaded the React source, observed a real source edit over the proxied WSS HMR channel and rendered the update. The source was restored and task-owned processes/trust entry removed afterward. This fixture had no login or Kubernetes connection; expected anonymous401 responses were excluded from JavaScript failure checks.
+- Rebuilt and restarted only the verified local host backend, then checked `/readyz`, the served module entry/root and strict production CSP over HTTPS9090. Read-only metadata reports schema8 and the same four live registry entries with four encrypted credentials present. No database migration was needed. No registered remote cluster was contacted or modified, and no normal booking or PAT was changed for testing.
+
+Commands actually executed (`TMPDIR` and `GOTMPDIR` used `/local/workspace/devctl-tmp`; npm cache used `/local/workspace/devctl-npm-cache`):
+
+| Command | Result |
+| --- | --- |
+| `make build test frontend-test` | Passed; pinned dependency installation, strict TypeScript,13 frontend unit cases, Go race suite, production bundle and headless UI contracts. External-service Go cases skip without their test configuration |
+| `make demo-test` | Passed; isolated real PostgreSQL internal suites (API16.181s, store14.151s), then actual Keycloak/CLI/native kubectl integration26.241s (manual8.63s, stable-primary16.57s). Browser cases skipped here and ran separately below |
+| `./scripts/browser-test.sh` | Passed6.122s; disposable Keycloak browser SSO/PAT flow3.03s and automatic-booking/browser/CLI flow2.06s, with isolated schemas and local TLS protocol fixtures |
+| `go test -race ./internal/webui ./internal/browser ./cmd/devctld -count=1` | Passed; focused development-proxy tests also reran successfully after adding the exact Vite environment module route |
+| `bash .demo/react-dev-smoke/run.sh` | Passed; temporary actual Vite/verified HTTPS/WSS React Fast Refresh fixture described above |
+| `go vet ./...`, `node --check internal/webui/testdata/primary-ui.cjs`, `bash -n scripts/*.sh`, `git diff --check` | Passed |
+| `docker buildx build --check --progress plain .` | Passed; container recipe validation only |
+| `./scripts/package-client.sh` | Passed; Linux full-CLI archive rebuilt |
+| Verified backend restart; TLS checks of `/readyz`, `/`, production CSP; read-only schema/registry counts | Passed; schema8 and4 live registrations/credentials preserved |
+
+Implemented but not tested in this iteration: a full application container image build and container runtime. The Docker filesystem had insufficient free space for that rebuild; no unrelated Docker data was pruned. The host production bundle/backend were built and exercised. Frontend browser actions run against deterministic API fixtures; real provider/gateway tests separately cover SSO and transport. Corporate OIDC, production proxies/load, desktop keyrings/non-Linux runtimes and real Kubernetes workload behavior remain deployment validation work. Kubernetes privilege isolation, workload/storage cleanup, resource accounting and queueing remain deferred under the current coordination-only scope. [ADR009](adr-009.md) records the frontend/build decisions.
+
 ## 2026-11-12: editable PAT automatic booking and two supported clients
 
 Implemented and tested:
