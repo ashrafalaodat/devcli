@@ -266,6 +266,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "max_participants must be 2 through 10")
 		return
 	}
+	if err := model.ValidateLabels(b.Labels); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if e := kube.Validate([]byte(b.Kubeconfig)); e != nil {
 		fail(w, 400, e.Error())
 		return
@@ -278,18 +282,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	c := model.Cluster{ID: b.ID, Name: b.Name, Labels: b.Labels, MaxParticipants: b.MaxParticipants}
 	e = s.Store.Register(r.Context(), user(r), c, ciphertext)
 	respond(w, e, map[string]string{"id": c.ID, "status": "registered"})
-}
-func (s *Server) maintain(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		Maintenance *bool  `json:"maintenance"`
-		Reason      string `json:"reason"`
-	}
-	if e := decode(w, r, &b); e != nil || b.Maintenance == nil || b.Reason == "" {
-		fail(w, 400, "maintenance boolean and audit reason required")
-		return
-	}
-	e := s.Store.Maintain(r.Context(), user(r), r.PathValue("id"), *b.Maintenance, b.Reason)
-	respond(w, e, map[string]string{"status": "updated"})
 }
 
 func (s *Server) deregister(w http.ResponseWriter, r *http.Request) {

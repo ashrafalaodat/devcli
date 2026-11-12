@@ -123,7 +123,7 @@ func (e *environment) firstPrimaryKubectl(dir, config, username string, wantSucc
 	if !strings.HasPrefix(action, e.issuer+"/") {
 		e.t.Fatal("automatic login did not use the expected local Keycloak form")
 	}
-	r, err = browser.PostForm(action, url.Values{"username": {username}, "password": {username + "-dev-only"}, "credentialId": {""}})
+	r, err = browser.PostForm(action, url.Values{"username": {username}, "password": {demoPassword(username)}, "credentialId": {""}})
 	if err != nil {
 		e.t.Fatal("automatic login browser form could not be completed")
 	}

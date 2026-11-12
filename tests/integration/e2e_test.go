@@ -195,7 +195,7 @@ func (e *environment) login(dir, username string, approved bool) {
 	if action == "" {
 		e.t.Fatal("Keycloak login form not found (realm may still be starting)")
 	}
-	r, err = browser.PostForm(action, url.Values{"username": {username}, "password": {username + "-dev-only"}, "credentialId": {""}})
+	r, err = browser.PostForm(action, url.Values{"username": {username}, "password": {demoPassword(username)}, "credentialId": {""}})
 	if err != nil {
 		e.t.Fatal(err)
 	}

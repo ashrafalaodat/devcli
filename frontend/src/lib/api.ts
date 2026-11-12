@@ -1,5 +1,14 @@
 import type {ApiClient, ApiOptions} from '../types';
 
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export function createApi(csrfToken: () => string | undefined, onUnauthorized: () => void): ApiClient {
   return async <T>(path: string, options: ApiOptions = {}) => {
     const {body, headers: extraHeaders, ...request} = options;
@@ -18,7 +27,7 @@ export function createApi(csrfToken: () => string | undefined, onUnauthorized: (
     }
     if (!response.ok) {
       const message = result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' ? result.error : `Request failed (${response.status}).`;
-      throw new Error(message);
+      throw new ApiError(message, response.status);
     }
     return result as T;
   };

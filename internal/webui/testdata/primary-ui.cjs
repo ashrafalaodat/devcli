@@ -14,6 +14,7 @@ const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'a
 const state = {
   primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, patSerial: 0, pats: [], mutations: [], requests: [], unauthorized: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
   registry: new Map(['a', 'b', 'c'].map(id => [id, {id, name: `Cluster ${id.toUpperCase()}`, labels: {test: 'ui'}, max_participants: 2}])),
+  labelFailure: false, labelConflict: null,
   sharing: new Map(), bookingKeys: [], bookingFailure: false, sessionFailure: false, audit: [{id: 1, at: new Date(fixtureStartedAt - 1000).toISOString(), actor: 'admin', action: 'settings.updated', object_id: 'team-policy', detail: 'Fixture policy reason'}, {id: 2, at: new Date(fixtureStartedAt - 3600000).toISOString(), actor: 'alice', action: 'session.created', object_id: 's-a', detail: '<img src=x onerror=alert(1)>'}], maintenance: new Map(), registrationFailure: false, maintenanceFailure: false, releaseFailure: false, heldRequest: null, kubernetesRequests: 0, profileReads: 0,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: new Date(fixtureStartedAt - 1800000).toISOString(), expires_at: new Date(fixtureStartedAt + 4 * 3600000).toISOString(), reason: 'fixture'})),
 };
@@ -149,6 +150,19 @@ const server = http.createServer(async (req, res) => {
       state.registry.set(body.id, {id: body.id, name: body.name, labels: structuredClone(body.labels), max_participants: body.max_participants});
       reply(res, 200, {id: body.id, status: 'registered'}); return;
     }
+    if (/^\/v1\/admin\/clusters\/[^/]+$/.test(url.pathname) && req.method === 'PATCH' && Object.hasOwn(body, 'labels')) {
+      assert.deepEqual(Object.keys(body).sort(), ['expected_labels', 'labels', 'reason']);
+      assert.ok(body.reason.trim()); assert.equal(body.reason, body.reason.trim());
+      assert.ok(body.labels && typeof body.labels === 'object' && !Array.isArray(body.labels));
+      assert.ok(body.expected_labels && typeof body.expected_labels === 'object' && !Array.isArray(body.expected_labels));
+      const id = url.pathname.split('/').at(-1), record = state.registry.get(id);
+      if (!record || state.retired.has(id)) {reply(res,404,{error:'Fixture cluster not found'});return;}
+      if (state.labelConflict?.id === id) {record.labels=structuredClone(state.labelConflict.labels);state.labelConflict=null;}
+      const canonical=labels=>JSON.stringify(Object.entries(labels).sort(([a],[b])=>a.localeCompare(b)));
+      if (canonical(body.expected_labels)!==canonical(record.labels)) {reply(res,409,{error:'Cluster labels changed. Reload current labels before saving.'});return;}
+      if (state.labelFailure) {state.labelFailure=false;reply(res,503,{error:'Fixture labels rejected; retry this edit'});return;}
+      record.labels=structuredClone(body.labels);reply(res,200,{status:'updated'});return;
+    }
     if (/^\/v1\/admin\/clusters\/[^/]+$/.test(url.pathname) && req.method === 'PATCH') {
       assert.deepEqual(Object.keys(body).sort(), ['maintenance', 'reason']); assert.equal(typeof body.maintenance, 'boolean'); assert.ok(body.reason.trim()); assert.equal(body.reason, body.reason.trim());
       const id = url.pathname.split('/').at(-1);
@@ -233,6 +247,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('[data-section^="admin-"]').count(), 0, 'developers must not receive administration navigation');
     assert.equal(await page.locator('#identity img').count(), 0, 'identity text must be escaped');
     assert.equal(await page.getByRole('button', {name: /^Deregister/}).count(), 0);
+    assert.equal(await page.getByRole('button', {name: 'Edit labels…', exact: true}).count(), 0, 'developers must not receive registry label controls');
     assert.equal(await page.getByRole('button',{name:'Book a cluster',exact:true}).filter({visible:true}).first().isDisabled(),true,'reached booking limits must block new placement in the UI');
     assert.match(await page.locator('#booking-limit-help').innerText(),/limit is reached.*administrator/i);
     assert.equal(await page.getByRole('button', {name: 'Renew lease', exact: true}).count(), 0);
@@ -320,6 +335,7 @@ const server = http.createServer(async (req, res) => {
     try { await page.locator('[data-section="clusters"]').filter({visible: true}).first().click({timeout: 250}); } catch { backgroundBlocked = true; }
     assert.equal(backgroundBlocked, true, 'native drawer must make background navigation inert');
     await page.keyboard.press('Escape'); await create.waitFor({state: 'hidden'});
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Create kubeconfig');
     assert.equal(await createTrigger.evaluate(node => node === document.activeElement), true, 'Escape returns focus to the trigger');
     assert.equal(mutation('/v1/pats','POST').length, 0, 'cancelling creation issues no token');
     await createTrigger.click(); create = dialog(page, 'Create a kubeconfig');
@@ -494,6 +510,111 @@ const server = http.createServer(async (req, res) => {
     await maintenance.locator('input[name=reason]').fill('  UI maintenance off  '); await maintenance.getByRole('button',{name:'Enable placement',exact:true}).click(); await maintenance.waitFor({state:'hidden'});
     assert.deepEqual(maintenanceUpdates().at(-1).body,{maintenance:false,reason:'UI maintenance off'});
 
+    // Labels are devctl placement metadata, not Kubernetes object mutations.
+    // A fixed base snapshot prevents a background refresh or a concurrent
+    // administrator from silently replacing the draft being reviewed.
+    const labelChanges=()=>state.mutations.filter(value=>value.method==='PATCH'&&Object.hasOwn(value.body,'labels'));
+    const beforeLabelSessions=structuredClone(state.sessions), beforeLabelPATs=structuredClone(state.pats), beforeLabelPrimary=state.primary, beforeLabelVersion=state.version;
+    const openLabels=async id=>{await adminRow(id).getByRole('button',{name:'Edit labels…',exact:true}).click();const view=dialog(adminPage,`Edit labels for ${state.registry.get(id).name}`);await view.waitFor();return view;};
+    const labelRows=view=>view.locator('[data-label-row]');
+    const findLabelRow=async(view,key)=>{for(let index=0;index<await labelRows(view).count();index++){const row=labelRows(view).nth(index);if(await row.locator('input[name=label_key]').inputValue()===key)return row;}throw new Error(`Missing label row ${key}`);};
+    let labels=await openLabels('c');
+    assert.match(await labels.innerText(),/Kubernetes object labels are not changed/i);
+    assert.equal(await labels.getByRole('button',{name:'Save labels',exact:true}).isDisabled(),true,'unchanged labels cannot create duplicate audit writes');
+    await labels.locator('input[name=label_value]').first().fill('cancelled');await closeDialog(adminPage,labels);
+    assert.equal(labelChanges().length,0);assert.deepEqual(state.registry.get('c').labels,{test:'ui'});
+    labels=await openLabels('c');
+    const labelForm=labels.locator('#cluster-labels-form');
+    await labelForm.locator('input[name=label_key]').first().fill('');await labels.getByRole('button',{name:'Save labels',exact:true}).click();
+    await labels.getByRole('alert').filter({hasText:'Enter a label key or remove this row.'}).waitFor();
+    await labelForm.locator('input[name=label_key]').first().fill('test');
+    await labels.getByRole('button',{name:'Add label',exact:true}).click();
+    await adminPage.waitForFunction(id=>document.activeElement?.id===id,await labelForm.locator('input[name=label_key]').nth(1).getAttribute('id'));
+    assert.equal(await labelForm.locator('input[name=label_key]').nth(1).evaluate(input=>input===document.activeElement),true,'adding a row focuses its key');
+    await labelForm.locator('input[name=label_key]').nth(1).fill(' test ');await labelForm.locator('input[name=label_value]').nth(1).fill('another');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.getByRole('alert').filter({hasText:'Label keys must be unique'}).waitFor();
+    await labels.getByRole('alert').getByRole('link').click();assert.equal(await labelForm.locator('input[name=label_key]').nth(1).evaluate(input=>input===document.activeElement),true,'error summary links focus their fields');
+    await labelForm.locator('input[name=label_key]').nth(1).fill('Example.com/component');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.getByRole('alert').filter({hasText:'Use a valid label key'}).waitFor();
+    await labelForm.locator('input[name=label_key]').nth(1).fill(' example.com/component ');await labelForm.locator('input[name=label_value]').nth(1).fill('bad value');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.getByRole('alert').filter({hasText:'Use an empty value'}).waitFor();
+    await labelForm.locator('input[name=label_value]').nth(1).fill(' api ');await labelForm.locator('input[name=reason]').fill('  ');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.getByRole('alert').filter({hasText:'Enter an audit reason.'}).waitFor();
+    assert.equal(labelChanges().length,0,'invalid labels or a blank audit reason must not reach the API');
+    await labels.getByRole('button',{name:'Add label',exact:true}).click();await labelForm.locator('input[name=label_key]').nth(2).fill('region');
+    await labelForm.locator('input[name=reason]').fill('  Match integration requests  ');
+    const expectedLabelUpdate={labels:{test:'ui','example.com/component':'api',region:''},expected_labels:{test:'ui'},reason:'Match integration requests'};
+    state.labelFailure=true;
+    const heldLabels=holdRequest('PATCH','/v1/admin/clusters/c'), rejectedLabels=responseFor(adminPage,response=>new URL(response.url()).pathname==='/v1/admin/clusters/c'&&response.request().method()==='PATCH');
+    try {
+      await labels.getByRole('button',{name:'Save labels',exact:true}).click();await heldLabels.arrived;
+      assert.equal(await labels.locator('button[type=submit]').isDisabled(),true);assert.equal(await labelForm.locator('input[name=label_key]').first().isDisabled(),true);
+      await adminPage.keyboard.press('Escape');assert.equal(await labels.isVisible(),true,'pending label writes cannot be dismissed');
+    }catch(failure){console.error('Label editor fixture state:',await labels.innerText());console.error(await labelForm.locator('input').evaluateAll(inputs=>inputs.map(input=>({name:input.name,value:input.value,disabled:input.disabled}))));throw failure;
+    }finally{heldLabels.release();}
+    assert.equal((await rejectedLabels).status(),503);await labels.getByRole('alert').filter({hasText:'Fixture labels rejected'}).waitFor();
+    assert.equal(await labelForm.locator('input[name=label_value]').nth(1).inputValue(),' api ');assert.deepEqual(state.registry.get('c').labels,{test:'ui'});
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.waitFor({state:'hidden'});
+    assert.deepEqual(labelChanges().at(-1).body,expectedLabelUpdate);assert.deepEqual(labelChanges().at(-2).body,expectedLabelUpdate,'retry preserves the same draft and expected snapshot');
+    await adminRow('c').getByText('example.com/component=api',{exact:true}).waitFor();await adminRow('c').getByText('region=',{exact:true}).waitFor();
+
+    labels=await openLabels('c');
+    const draftedRegion=await findLabelRow(labels,'region');await draftedRegion.locator('input[name=label_value]').fill('eu');await labels.locator('input[name=reason]').fill('Review concurrent placement edit');
+    state.labelConflict={id:'c',labels:{region:'us',marker:''}};const beforeLabelsConflictReads=state.registryReads;
+    const conflictedLabels=responseFor(adminPage,response=>new URL(response.url()).pathname==='/v1/admin/clusters/c'&&response.request().method()==='PATCH');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();
+    try {assert.equal((await conflictedLabels).status(),409);await labels.getByText('These labels changed while you were editing.',{exact:true}).waitFor({timeout:5000});}
+    catch(failure){console.error('Conflict editor fixture state:',await labels.innerText());console.error('Latest label request:',labelChanges().at(-1));throw failure;}
+    assert.equal(await draftedRegion.locator('input[name=label_value]').inputValue(),'eu','conflict refresh must retain the rejected draft');
+    assert.equal(await labels.getByRole('button',{name:'Save labels',exact:true}).isDisabled(),true);assert.ok(state.registryReads>beforeLabelsConflictReads);
+    assert.deepEqual(state.registry.get('c').labels,{region:'us',marker:''},'conflict must not overwrite the newer saved labels');
+    await labels.getByRole('button',{name:'Reload current labels',exact:true}).click();
+    await labels.getByRole('status').filter({hasText:'Current labels were loaded'}).waitFor();
+    await adminPage.waitForFunction(id=>document.activeElement?.id===id,await labels.locator('input[name=label_key]').first().getAttribute('id'));
+    assert.equal(await labels.locator('input[name=label_key]').first().evaluate(input=>input===document.activeElement),true,'explicit reload restores focus to the refreshed editor');
+    const latestRegion=await findLabelRow(labels,'region');assert.equal(await latestRegion.locator('input[name=label_value]').inputValue(),'us');
+    assert.equal(await labels.getByRole('button',{name:'Save labels',exact:true}).isDisabled(),true);
+    await latestRegion.locator('input[name=label_value]').fill('eu');await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.waitFor({state:'hidden'});
+    assert.deepEqual(labelChanges().at(-1).body.expected_labels,{region:'us',marker:''},'only explicit reload accepts a new expected-label snapshot');
+    assert.deepEqual(state.registry.get('c').labels,{marker:'',region:'eu'});
+
+    // Add/remove controls enforce the 32-label bound before a request is sent.
+    labels=await openLabels('c');const beforeCap=labelChanges().length;
+    for(let count=await labelRows(labels).count();count<32;count++)await labels.getByRole('button',{name:'Add label',exact:true}).click();
+    assert.equal(await labelRows(labels).count(),32);assert.equal(await labels.getByRole('button',{name:'Add label',exact:true}).isDisabled(),true);
+    await labels.getByRole('button',{name:'Remove label 32',exact:true}).click();assert.equal(await labelRows(labels).count(),31);assert.equal(await labels.getByRole('button',{name:'Add label',exact:true}).isDisabled(),false);
+    await closeDialog(adminPage,labels);assert.equal(labelChanges().length,beforeCap);
+
+    // Maintenance and active holders do not block metadata edits; clearing
+    // labels is explicit and never toggles placement or releases reservations.
+    await adminRow('ui-registered').getByRole('button',{name:'Maintenance…',exact:true}).click();maintenance=dialog(adminPage,'Pause placement for UI registration fixture?');
+    await maintenance.locator('input[name=reason]').fill('Metadata edit during planned maintenance');await maintenance.getByRole('button',{name:'Set maintenance',exact:true}).click();await maintenance.waitFor({state:'hidden'});
+    labels=await openLabels('ui-registered');await labels.getByRole('button',{name:'Remove all labels',exact:true}).click();
+    await labels.getByText(/Saving removes every registry label/).waitFor();await labels.locator('input[name=reason]').fill('Remove obsolete placement tags');
+    await labels.getByRole('button',{name:'Save labels',exact:true}).click();await labels.waitFor({state:'hidden'});
+    assert.deepEqual(labelChanges().at(-1).body,{labels:{},expected_labels:{region:'eu',purpose:'gui'},reason:'Remove obsolete placement tags'});
+    assert.deepEqual(state.registry.get('ui-registered').labels,{});assert.equal(state.maintenance.get('ui-registered'),true);
+    assert.deepEqual(state.sessions,beforeLabelSessions);assert.deepEqual(state.pats,beforeLabelPATs);assert.equal(state.primary,beforeLabelPrimary);assert.equal(state.version,beforeLabelVersion);
+
+    // A legacy or untrusted metadata value must still render as escaped text.
+    state.registry.get('b').labels={legacy:'<img src=x onerror=alert(1)>'};await adminPage.locator('#refresh-admin').click();await adminRow('b').getByText('legacy=<img src=x onerror=alert(1)>',{exact:true}).waitFor();
+    assert.equal(await adminRow('b').locator('img').count(),0);labels=await openLabels('b');await closeDialog(adminPage,labels);
+    await adminPage.setViewportSize({width:390,height:844});await expectNoOverflow(adminPage,'Mobile registry label controls');
+    await expectInWidth(adminRow('c').getByRole('button',{name:'Edit labels…',exact:true}),390);
+    labels=await openLabels('c');await expectInWidth(labels.locator('input[name=label_key]').first(),390);await expectInWidth(labels.getByRole('button',{name:'Save labels',exact:true}),390);await closeDialog(adminPage,labels);
+    await adminPage.setViewportSize({width:1440,height:1040});
+    const refreshedCatalogue=responseFor(page,response=>new URL(response.url()).pathname==='/v1/clusters'&&response.request().method()==='GET');
+    await page.locator('#refresh-pats').click();
+    const refreshedClusters=await (await refreshedCatalogue).json();
+    assert.deepEqual(refreshedClusters.find(value=>value.id==='c').labels,{marker:'',region:'eu'},'developer refresh receives the authoritative edited labels');
+    await page.waitForFunction(()=>{const button=document.querySelector('#refresh-pats');return button&&!button.disabled&&button.getAttribute('aria-busy')!=='true';});
+    await nav(page,'clusters');await page.getByRole('searchbox',{name:'Search clusters',exact:true}).fill('');
+    try {
+      await page.locator('#cluster-list [data-cluster-id="c"]').getByText('marker=',{exact:true}).waitFor({timeout:5000});
+      await page.locator('#cluster-list [data-cluster-id="c"]').getByText('region=eu',{exact:true}).waitFor({timeout:5000});
+    }catch(failure){console.error('Catalogue fixture state:',await page.locator('#section-clusters').innerText());console.error('Catalogue inputs:',await page.locator('#section-clusters input,#section-clusters select').evaluateAll(inputs=>inputs.map(input=>({label:input.getAttribute('aria-label'),value:input.value}))));console.error('Saved registry labels:',state.registry.get('c').labels);throw failure;}
+    await nav(page,'access');
+
     await nav(adminPage,'admin-people'); const activeBooking=primary(); assert.ok(activeBooking); const beforeReleasePATs=structuredClone(state.pats);
     const releases=()=>state.mutations.filter(value=>value.method==='POST'&&/^\/v1\/admin\/sessions\/[^/]+\/release$/.test(value.path));
     const openRelease=async()=>{await adminPage.locator(`[data-session-id="${activeBooking.id}"]`).filter({visible:true}).getByRole('button',{name:/Release/}).click();return dialog(adminPage,'Release booking on Cluster C?');};
@@ -574,6 +695,6 @@ const server = http.createServer(async (req, res) => {
     assert.equal(state.sessions.filter(value=>value.state==='ACTIVE'&&value.owner==='alice').length,0); assert.equal(state.sessions.find(value=>value.id==='s-bob-shared').state,'ACTIVE','logout must preserve another developer’s booking'); await expectStorageEmpty(page);
     assert.deepEqual(nativeDialogs,[],'product flows must use accessible in-page dialogs'); assert.deepEqual(errors,[]); assert.deepEqual(cspErrors,[]); assert.equal(state.kubernetesRequests,0); assert.deepEqual(externalRequests,[]);
     await context.close();
-    console.log('Slate UI contracts passed: strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
+    console.log('Slate UI contracts passed: audited registry labels with row validation/empty values/32-label bound/atomic clear, retained drafts and explicit stale-label reload, mobile label editing and unchanged bookings/PATs, strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error=>{console.error(error.stack);server.close();process.exitCode=1;});

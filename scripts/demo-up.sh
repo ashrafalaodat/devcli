@@ -29,6 +29,7 @@ for attempt in {1..120}; do
   sleep 2
 done
 if [[ "$ready" != 1 ]]; then echo 'Keycloak failed readiness; inspect docker compose logs keycloak' >&2; exit 1; fi
+./scripts/update-demo-passwords.sh --if-needed
 if [[ -f .demo/backend.pid ]]; then
   backend_pid="$(cat .demo/backend.pid)"
   if devctl_demo_owns_backend "$backend_pid"; then
@@ -51,7 +52,7 @@ for attempt in {1..30}; do
   if curl --max-time 2 --cacert "$DEVCTL_GATEWAY_CA_FILE" -fsS "$DEVCTL_API/readyz" >/dev/null 2>&1; then
     echo 'HTTPS demo ready. Run: source .demo/env; export PATH="$PWD/bin:$PATH"; devctl login'
     echo 'For all new shells: devctl shell install --shell bash (or zsh/fish).'
-    echo 'Development accounts: alice / alice-dev-only, bob / bob-dev-only, admin / admin-dev-only'
+    echo 'Development-only accounts: alice / alice, bob / bob-dev-only, admin / admin'
     echo 'Existing registrations are preserved; no Kubernetes cluster is contacted by startup.'
     exit 0
   fi

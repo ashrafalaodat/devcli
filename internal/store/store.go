@@ -372,8 +372,11 @@ func (s *Store) Register(ctx context.Context, u model.Identity, c model.Cluster,
 	if !u.Admin {
 		return ErrForbidden
 	}
+	if err := model.ValidateLabels(c.Labels); err != nil {
+		return fmt.Errorf("%w: %s", ErrConflict, err)
+	}
 	return s.update(ctx, func(t *Tx) error {
-		labels, e := json.Marshal(c.Labels)
+		labels, e := json.Marshal(cloneClusterLabels(c.Labels))
 		if e != nil {
 			return e
 		}
@@ -384,19 +387,7 @@ func (s *Store) Register(ctx context.Context, u model.Identity, c model.Cluster,
 	})
 }
 func (s *Store) Maintain(ctx context.Context, u model.Identity, id string, on bool, reason string) error {
-	if !u.Admin {
-		return ErrForbidden
-	}
-	return s.update(ctx, func(t *Tx) error {
-		tag, e := t.Exec(ctx, "UPDATE clusters SET maintenance=$2 WHERE id=$1 AND deregistered_at IS NULL", id, on)
-		if e != nil {
-			return e
-		}
-		if tag.RowsAffected() == 0 {
-			return ErrNotFound
-		}
-		return t.audit(ctx, u.Key(), "maintenance", id, reason)
-	})
+	return s.UpdateCluster(ctx, u, id, ClusterUpdate{Maintenance: &on}, reason)
 }
 
 // Config is server-internal: the encrypted upstream credentials must never be

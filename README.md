@@ -58,12 +58,14 @@ Development-only accounts:
 
 | Account | Password | Access |
 | --- | --- | --- |
-| `alice` | `alice-dev-only` | Developer |
+| `alice` | `alice` | Developer |
 | `bob` | `bob-dev-only` | Developer |
-| `admin` | `admin-dev-only` | Application administrator |
+| `admin` | `admin` | Application administrator |
 | `outsider` | `outsider-dev-only` | Rejected |
 
 Keycloak administration uses development bootstrap account `bootstrap-admin` / `bootstrap-dev-only`. For an existing persistent realm, import `deploy/keycloak-web-client.json` under **Clients → Import client** if `devctl-web` is absent. This adds the browser client without recreating users. Its exact callback is `https://127.0.0.1:9090/auth/callback`.
+
+These simple account passwords are for the disposable local demo only. `make demo-up` also applies the Alice/admin password update once to an existing demo realm, preserving user IDs, groups and saved application data. To explicitly reset just these two development passwords again, run `./scripts/update-demo-passwords.sh --reset`. It accepts only this project's local Keycloak container; it never uses an organisation's identity-provider configuration. Bob and the bootstrap administrator keep their separate development passwords.
 
 PostgreSQL and Keycloak use separate named volumes. Startup preserves identities, registry data and the encryption key; do not delete volumes to add a client. Keep `.demo` when moving this repository because its saved encryption key is required for the registry. After a move, run `make demo-up` and source `.demo/env` again.
 
@@ -206,11 +208,16 @@ Sign in as `admin`; administrator navigation appears in the sidebar and on mobil
 - Set the default maximum held clusters, initially one, and the release-after-inactivity period, initially four hours, with an audit reason.
 - Set a developer override or clear it to inherit the default. The view shows held counts, effective limits and primary selections. Developers appear after their first application login.
 - Register an approved static kubeconfig, which is encrypted before storage. Registration and booking do not contact or modify Kubernetes.
+- Edit a cluster's registry labels through **Cluster registry → Edit labels…**. Add, change or remove key/value rows, enter an audit reason, and choose **Save labels**. Labels use Kubernetes syntax, allow empty values and are limited to32 entries. Removing all labels requires saving an explicitly empty set.
 - Enable/disable maintenance, release bookings and revoke another user's PAT with an audit reason.
 - Deregister an unused cluster from **Administration → Cluster registry** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
 - Inspect allocation and administration audit records. Credential values are never displayed.
 
 Search and filters operate on data already loaded in the current view. Audit filtering covers the latest100 returned events, rather than a server-side search of the complete history. Forms retain entered values after recoverable errors, and an unchanged booking retry retains its idempotency key.
+
+Registry label edits affect future matching and PAT automatic booking. They do not change Kubernetes object labels, current bookings, primary selections, imported credentials or saved PAT selectors. If another administrator changes the labels while the editor is open, saving returns a conflict and preserves the draft. **Reload current labels** explicitly replaces that draft with the latest version for review; it never silently overwrites the other edit. Label changes are audited with the administrator, reason and before/after metadata. See [ADR011](docs/adr-011.md) and [OpenAPI](docs/openapi.json) for the conditional PATCH contract.
+
+The [Slate label-editor screenshot](docs/screenshots/slate-cluster-labels.png) uses isolated fictional data.
 
 Lower booking-count limits never evict holders. Inactivity-period changes update current deadlines from their last activity; shortening the period can release idle bookings. Maintenance blocks new placement without ending current reservations. Administrative release updates primary selection using the same safe application state path as owner release; no Kubernetes workloads are removed.
 

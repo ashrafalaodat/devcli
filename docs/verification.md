@@ -1,5 +1,36 @@
 # Gateway verification record
 
+## 2026-11-12: demo passwords and editable cluster labels
+
+Implemented and tested:
+
+- Changed the development accounts to `alice/alice` and `admin/admin` in the realm seed and existing persistent local Keycloak. A guarded one-time administration script accepts only this project's expected running container, image and loopback port, uses a private temporary CLI configuration, and verifies stable account IDs, email/enabled metadata and groups. It preserves the realm and other accounts, removes temporary token files and writes a 0600 marker in the persistent volume. Repeated startup skips the update; explicit `--reset` resets only these two demo passwords. Application authentication still uses Authorization Code/PKCE; the script is local identity-provider administration.
+- Added **Cluster registry → Edit labels…** using the Slate drawer, key/value rows, add/remove/explicit-clear controls, linked validation, required audit reason, busy guards and mobile-sized controls. Empty values are valid and the maximum is 32 labels. Drafts and their original label snapshot survive refresh/errors. A stale save retains the draft and requires explicit reload before another save; reload announces the new version and restores useful focus. Delayed row focus respects a more recent field selection. Scoped CSS keeps the rows compact without reducing targets.
+- Extended the existing administrator PATCH endpoint with optional replacement `labels` and required `expected_labels`, alongside the existing maintenance field. Strict JSON rejects null/non-string label values, duplicate label keys and unknown fields. The shared Kubernetes validator protects new labels and registrations; expected snapshots allow legacy invalid metadata to be repaired. A database-backed lock and value comparison serialize editing with allocation and deregistration. Stale combined patches roll back both fields, no-op saves do not duplicate change audits, and unexpected storage errors return a generic 503. No schema migration was needed.
+- Changes record administrator identity, reason and old/new labels, preserve credentials, bookings, primary selections, sharing and PAT policies/expiry, and make no Kubernetes calls. Real PostgreSQL tests covered racing editors, booking/deregistration ordering, occupied/maintenance edits, clearing, persistence and changed future PAT placement. Real local Keycloak browser tests separately verified admin/developer authorization, Origin/CSRF, stale 409, unchanged credentials and a saved PAT using an unchanged primary, then a newly eligible cluster after release. Only disposable TLS protocol fixtures were contacted.
+- Expanded strict-CSP Chrome tests covered row syntax/duplicates/empty values/reason, 32-label controls, 503 retry, cancellation/busy handling, 409 draft retention and explicit reload, active-booking/PAT preservation, catalogue refresh, escaped legacy text and 390px controls. The catalogue check now waits for the actual fresh response and completed refresh before asserting rendered labels. New API-error typing preserves HTTP status without exposing response extras or changing 401 cleanup. All earlier Slate/activity/sharing/logout/security regressions remain.
+- Updated current README credentials/GUI guidance, OpenAPI, security notes and ADR 011. The saved label-editor screenshot contains fictional fixture data. The verified host backend now serves the final bundle over HTTPS 9090; readiness, matching served/built JavaScript and strict CSP passed. Read-only metadata remains schema 8 with 4 live registrations and 4 encrypted credentials. No normal cluster's registry labels or Kubernetes resources were changed for verification.
+
+Commands actually executed (Go/test temporary files and npm cache used the existing local workspace paths):
+
+| Command | Result |
+| --- | --- |
+| `./scripts/update-demo-passwords.sh --if-needed` | Applied to the owned persistent demo; identity/group checks passed. Subsequent calls skipped without resetting accounts |
+| `./scripts/demo-passwords-test.sh` | Passed; unsafe container/port/context refusal, actual administration-script control flow, preserved identities, one-time skip and explicit reset, using isolated command doubles without network |
+| `make build`, `make test` | Passed; strict TypeScript, 14 frontend unit cases, password/environment shell regressions, Go race tests and realm/helper consistency. External-service tests skip without their configuration |
+| `make frontend-test` | Passed against the final bundle; independent direct UI runs also passed 15.00s and 17.14s after synchronizing the catalogue refresh assertion |
+| Focused PostgreSQL cluster-update race tests | Passed; initial focused store 2.311s/API 1.939s/model 1.055s; additional invalid-registration API test 1.384s |
+| `make demo-test` | Passed; real PostgreSQL isolated suites (API 17.648s, store 14.519s), then actual Keycloak/CLI/kubectl integration 25.332s with the new demo passwords (manual 7.66s, stable-primary 16.65s). Browser cases skipped here and ran below |
+| `./scripts/browser-test.sh` | Passed 6.598s; real browser/PAT suite 2.96s, new registry-label flow 0.76s and automatic-booking/browser/CLI suite 1.86s against disposable Keycloak and TLS fixtures |
+| `node .demo/labels-visual.cjs` | Passed; actual production React desktop/mobile drawer captures with isolated fixture data, no JavaScript/overflow failures or external cluster requests |
+| OpenAPI JSON/internal-reference/path-parameter checks, `go vet ./...`, JavaScript/shell syntax, `git diff --check` | Passed |
+| `docker buildx build --check --progress plain .`, `./scripts/package-client.sh` | Passed; container recipe validated and Linux CLI archive rebuilt |
+| Verified backend restart, HTTPS readiness/bundle hash/CSP and schema/registry counts | Passed; final editor served on 9090, schema 8 and 4 registrations/credentials preserved |
+
+Initial test development corrected a gateway no-match expectation to its existing Kubernetes 403 behavior and synchronized asynchronous focus/refresh assertions; these were test assumptions. The actual delayed row-focus case was guarded before the final successful browser runs. The password script's initial CLI invocation failed before account updates, was corrected and then applied successfully with before/after identity checks.
+
+Implemented but not deployment-tested: full application container build/runtime, formal screen-reader/WCAG audit, corporate identity-provider password administration, production proxies/load and non-Linux keyrings/browsers. The simple passwords and migration apply only to the local demo; no corporate identity system was contacted. Real Kubernetes object/workload behavior is outside these protocol fixtures and remains unchanged. Existing coordination-only limitations remain as recorded below. [ADR 011](adr-011.md) records label-update semantics.
+
 ## 2026-11-12: approved Slate interface
 
 Implemented and tested:

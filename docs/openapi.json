@@ -1137,8 +1137,8 @@
     },
     "/v1/admin/clusters/{id}": {
       "patch": {
-        "summary": "Set maintenance without evicting existing holders",
-        "description": "Administrator group required. Reservation operations do not automatically create or delete Kubernetes resources. Original cluster credentials are never returned to clients.",
+        "summary": "Update maintenance or placement labels without changing existing bookings",
+        "description": "Administrator only; requires an audit reason. Optional maintenance and labels fields form one atomic update. labels replaces the entire registry label map, including labels:{} to clear it, and requires expected_labels containing the previously loaded label map. A stale snapshot returns409 with reload guidance rather than overwriting another editor. Labels accept at most32 Kubernetes-qualified keys and string values (empty values are valid). Omitted fields are preserved; explicit nulls, duplicate label keys and non-string values are rejected. Label edits are permitted while a cluster is occupied or in maintenance. They affect future UI/CLI/PAT placement only: active bookings, primary selections, PAT policies/expiry, sharing and upstream credentials are unchanged. No Kubernetes API call is made. Same-value updates with a current snapshot succeed without duplicate success audits; retired/unknown IDs return404. Unexpected persistence failures return503 without database details.",
         "responses": {
           "200": {
             "description": "Success",
@@ -1191,7 +1191,7 @@
             }
           },
           "409": {
-            "description": "Reservation conflict or invalid state",
+            "description": "Loaded labels no longer match current metadata; reload current labels, review changes and retry",
             "content": {
               "application/json": {
                 "schema": {
@@ -1201,7 +1201,7 @@
             }
           },
           "503": {
-            "description": "Service unavailable",
+            "description": "Metadata persistence unavailable; no database or credential details exposed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1236,17 +1236,64 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                   "maintenance": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Pause or enable new placement without evicting current holders."
+                  },
+                  "labels": {
+                    "type": "object",
+                    "maxProperties": 32,
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 63
+                    },
+                    "description": "Full replacement devctl registry labels, not Kubernetes object labels. Keys follow Kubernetes qualified-label syntax (optional DNS prefix); values may be empty strings. An empty object clears all labels."
+                  },
+                  "expected_labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Required with labels: exact previously loaded map for optimistic concurrency. {} represents no labels. Legacy snapshots may contain old invalid metadata so administrators can repair it; only the replacement must satisfy current label rules."
                   },
                   "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason, trimmed before persistence; maximum1000 UTF-8 bytes."
                   }
                 },
                 "required": [
-                  "maintenance",
                   "reason"
+                ],
+                "oneOf": [
+                  {
+                    "required": [
+                      "maintenance"
+                    ],
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "labels"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "expected_labels"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "required": [
+                      "labels",
+                      "expected_labels"
+                    ]
+                  }
                 ]
               }
             }
@@ -5420,8 +5467,11 @@
           "labels": {
             "type": "object",
             "additionalProperties": {
-              "type": "string"
-            }
+              "type": "string",
+              "maxLength": 63
+            },
+            "maxProperties": 32,
+            "description": "Initial registry labels with at most32 Kubernetes-qualified keys and string values. Empty values are permitted. These labels guide future reservation placement; no Kubernetes label is modified."
           },
           "kubeconfig": {
             "type": "string",

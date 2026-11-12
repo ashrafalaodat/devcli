@@ -22,7 +22,11 @@ Requests are pinned to the reservation and selection version observed at start. 
 
 The default authorization recheck interval is 1s; `DEVCTL_GATEWAY_RECHECK_INTERVAL` accepts 100ms through 30s. Individual checks time out after 5s. Failed credential validation, revoked/expired PATs, release/expiry, primary changes and unavailable reservation state close streams. There is no claim of immediate interruption of a Kubernetes operation already accepted upstream. Kubernetes client discovery caches may retain previous-cluster information until refreshed even though routing follows the new primary.
 
-## Cluster deregistration
+## Cluster registry updates and deregistration
+
+Administrator registry-label changes use the authenticated cluster PATCH endpoint, browser Origin/CSRF checks, an audit reason and a comparison with the labels loaded when editing began. The database transaction serializes replacement with allocation and deregistration; stale snapshots return409 without applying label or accompanying maintenance changes. Each actual label change records before/after metadata and its actor. Empty values are valid, an explicit empty object clears all labels, and new labels/registrations enforce Kubernetes key/value syntax with at most32 entries. An old snapshot can contain legacy invalid metadata so administrators can repair it.
+
+These labels are devctl placement metadata. Editing them never calls Kubernetes, changes its object labels or privileges, replaces encrypted kubeconfigs, modifies saved PAT selectors, or redirects an existing primary. Future allocations see the updated registry labels. Unexpected persistence failures return a generic service-unavailable error rather than internal database details. Label metadata remains visible through the existing approved-team cluster summaries.
 
 Administrators can deregister a cluster through the CLI or browser with a nonblank audit reason. The same PostgreSQL reservation lock serializes deregistration with booking and expiry: live reservations reject removal instead of being silently evicted. There is no force-deregister operation; an administrator must explicitly release each booking through the existing audited release control first.
 

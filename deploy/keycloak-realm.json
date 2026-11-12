@@ -155,7 +155,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "alice-dev-only",
+          "value": "alice",
           "temporary": false
         }
       ]
@@ -191,7 +191,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "admin-dev-only",
+          "value": "admin",
           "temporary": false
         }
       ]

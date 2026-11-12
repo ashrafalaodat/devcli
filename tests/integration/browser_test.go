@@ -49,7 +49,7 @@ func (e *environment) browserLogin(username string, approved bool) *browserSessi
 	if action == "" {
 		e.t.Fatal("web SSO did not reach the Keycloak login form; approve the web callback URI in the test client")
 	}
-	r, err = c.PostForm(action, url.Values{"username": {username}, "password": {username + "-dev-only"}, "credentialId": {""}})
+	r, err = c.PostForm(action, url.Values{"username": {username}, "password": {demoPassword(username)}, "credentialId": {""}})
 	if err != nil {
 		e.t.Fatal(err)
 	}

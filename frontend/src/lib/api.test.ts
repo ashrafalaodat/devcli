@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
 import {afterEach, test} from 'node:test';
-import {createApi} from './api.ts';
+import {ApiError, createApi} from './api.ts';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {globalThis.fetch = originalFetch;});
+
+test('API failures preserve HTTP status without exposing response details', async () => {
+  let rejected = 0;
+  globalThis.fetch = async () => Response.json({error: 'Cluster labels changed. Reload before saving.'}, {status: 409});
+  const api = createApi(() => 'csrf', () => {rejected++;});
+  await assert.rejects(api('/v1/admin/clusters/example', {method: 'PATCH', body: {labels: {}}}), error => error instanceof ApiError && error.status === 409 && error.message === 'Cluster labels changed. Reload before saving.');
+  assert.equal(rejected, 0);
+  globalThis.fetch = async () => Response.json({error: 'Sign in again.'}, {status: 401});
+  await assert.rejects(api('/v1/profile'), error => error instanceof ApiError && error.status === 401 && error.message === 'Sign in again.');
+  assert.equal(rejected, 1, 'status-aware errors must still clear rejected authentication');
+});
 
 test('API requests use same-origin cookies and only the current session CSRF token', async () => {
   const requests: {input: RequestInfo | URL; init: RequestInit | undefined}[] = [];

@@ -3126,3 +3126,15 @@ td > .small, td > .muted, td > strong + span { display: block; font-size: 12px; 
   .signin-story { padding: 20px 26px 0; }
   .signin-form { margin: 0 18px; max-width: none; padding: 28px 24px; }
 }
+
+/* Keep editable label rows compact without shrinking their touch targets. */
+#cluster-labels-form .form-fields { gap: 16px; }
+#cluster-labels-form .section-title { margin: 0 0 10px; align-items: center; }
+#cluster-labels-form [data-label-row] { margin: 0; padding: 12px 14px 16px; background: var(--surface); }
+#cluster-labels-form [data-label-row] .section-title { margin: 0 0 8px; }
+#cluster-labels-form [data-label-row] .field { margin-bottom: 0; }
+#cluster-labels-form .two-columns.fields { gap: 12px; }
+#cluster-labels-form .two-columns.fields .field { min-width: 0; }
+#cluster-labels-form .notice { margin: 0; }
+#cluster-labels-form > .quiet-note { margin-top: 16px; }
+#cluster-labels-dialog > .drawer-content > .dialog-detail { margin-bottom: 20px; }
