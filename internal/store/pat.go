@@ -25,18 +25,27 @@ var validPAT = regexp.MustCompile(`^dcpat_[A-Za-z0-9_-]{43}$`)
 // A PAT grants gateway access to its developer's current primary booking. It
 // cannot authenticate to the control API, carry administrator rights or renew.
 type PAT struct {
-	ID         string     `json:"id"`
-	Owner      string     `json:"owner"`
-	Name       string     `json:"name"`
-	Scope      string     `json:"scope"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ID          string                  `json:"id"`
+	Owner       string                  `json:"owner"`
+	Name        string                  `json:"name"`
+	Scope       string                  `json:"scope"`
+	CreatedAt   time.Time               `json:"created_at"`
+	ExpiresAt   time.Time               `json:"expires_at"`
+	RevokedAt   *time.Time              `json:"revoked_at,omitempty"`
+	LastUsedAt  *time.Time              `json:"last_used_at,omitempty"`
+	AutoBooking model.AutoBookingPolicy `json:"auto_booking"`
 }
 
 func (s *Store) CreatePAT(ctx context.Context, u model.Identity, name string, ttl time.Duration) (PAT, string, error) {
+	return s.CreatePATWithPolicy(ctx, u, name, ttl, model.AutoBookingPolicy{})
+}
+
+func (s *Store) CreatePATWithPolicy(ctx context.Context, u model.Identity, name string, ttl time.Duration, policy model.AutoBookingPolicy) (PAT, string, error) {
 	var out PAT
+	if err := model.ValidateAutoBookingPolicy(policy); err != nil {
+		return out, "", fmt.Errorf("%w: %s", ErrConflict, err)
+	}
+	policy = normalizeAutoBookingPolicy(policy)
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 {
 		return out, "", fmt.Errorf("%w: credential name must be 1 through 100 bytes", ErrConflict)
@@ -64,7 +73,7 @@ func (s *Store) CreatePAT(ctx context.Context, u model.Identity, name string, tt
 		if err != nil {
 			return err
 		}
-		out = PAT{ID: "p-" + uuid.NewString(), Owner: u.Key(), Name: name, Scope: "kubernetes:primary", CreatedAt: now, ExpiresAt: now.Add(ttl)}
+		out = PAT{ID: "p-" + uuid.NewString(), Owner: u.Key(), Name: name, Scope: "kubernetes:primary", CreatedAt: now, ExpiresAt: now.Add(ttl), AutoBooking: policy}
 		identity := u
 		identity.Admin = false
 		identity.TokenExpiresAt = time.Time{}
@@ -72,10 +81,10 @@ func (s *Store) CreatePAT(ctx context.Context, u model.Identity, name string, tt
 		if err != nil {
 			return err
 		}
-		if _, err = t.Exec(ctx, "INSERT INTO personal_access_tokens(id,owner_id,name,scope,token_digest,identity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", out.ID, out.Owner, out.Name, out.Scope, digest[:], identityJSON, out.CreatedAt, out.ExpiresAt); err != nil {
+		if _, err = t.Exec(ctx, "INSERT INTO personal_access_tokens(id,owner_id,name,scope,token_digest,identity,created_at,expires_at,auto_booking_enabled,auto_booking_selector) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", out.ID, out.Owner, out.Name, out.Scope, digest[:], identityJSON, out.CreatedAt, out.ExpiresAt, policy.Enabled, mustSelectorJSON(policy.Selector)); err != nil {
 			return err
 		}
-		return t.audit(ctx, u.Key(), "pat_create", out.ID, "one-time developer primary gateway credential issued; no control API or administrator access")
+		return t.audit(ctx, u.Key(), "pat_create", out.ID, fmt.Sprintf("one-time developer primary gateway credential issued; automatic booking enabled=%t; selector=%s; no control API or administrator access", policy.Enabled, mustSelectorJSON(policy.Selector)))
 	})
 	if err != nil {
 		return PAT{}, "", err
@@ -87,7 +96,7 @@ func (s *Store) PATs(ctx context.Context, u model.Identity, all bool) ([]PAT, er
 	if all && !u.Admin {
 		return nil, ErrForbidden
 	}
-	rows, err := s.Pool.Query(ctx, "SELECT id,owner_id,name,scope,created_at,expires_at,revoked_at,last_used_at FROM personal_access_tokens WHERE ($1 OR owner_id=$2) ORDER BY created_at DESC,id LIMIT 500", all, u.Key())
+	rows, err := s.Pool.Query(ctx, "SELECT id,owner_id,name,scope,created_at,expires_at,revoked_at,last_used_at,auto_booking_enabled,auto_booking_selector FROM personal_access_tokens WHERE ($1 OR owner_id=$2) ORDER BY created_at DESC,id LIMIT 500", all, u.Key())
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +104,11 @@ func (s *Store) PATs(ctx context.Context, u model.Identity, all bool) ([]PAT, er
 	out := []PAT{}
 	for rows.Next() {
 		v := PAT{}
-		if err := rows.Scan(&v.ID, &v.Owner, &v.Name, &v.Scope, &v.CreatedAt, &v.ExpiresAt, &v.RevokedAt, &v.LastUsedAt); err != nil {
+		var selectorJSON []byte
+		if err := rows.Scan(&v.ID, &v.Owner, &v.Name, &v.Scope, &v.CreatedAt, &v.ExpiresAt, &v.RevokedAt, &v.LastUsedAt, &v.AutoBooking.Enabled, &selectorJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(selectorJSON, &v.AutoBooking.Selector); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

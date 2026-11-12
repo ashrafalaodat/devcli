@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"devctl.local/devctl/internal/kube"
+	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/store"
 	"k8s.io/client-go/tools/clientcmd"
 	clientapi "k8s.io/client-go/tools/clientcmd/api"
@@ -19,13 +21,38 @@ type PATCreation struct {
 	Kubeconfig string    `json:"kubeconfig"`
 }
 
+type autoBookingInput struct {
+	Enabled  *bool             `json:"enabled"`
+	Selector map[string]string `json:"selector"`
+}
+
+func (b *autoBookingInput) policy() (model.AutoBookingPolicy, error) {
+	if b == nil {
+		return model.AutoBookingPolicy{Selector: map[string]string{}}, nil
+	}
+	if b.Enabled == nil {
+		return model.AutoBookingPolicy{}, fmt.Errorf("auto_booking.enabled boolean is required")
+	}
+	policy := model.AutoBookingPolicy{Enabled: *b.Enabled, Selector: b.Selector}
+	if policy.Selector == nil {
+		policy.Selector = map[string]string{}
+	}
+	return policy, model.ValidateAutoBookingPolicy(policy)
+}
+
 func (s *Server) createPAT(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Name string `json:"name"`
-		TTL  string `json:"ttl"`
+		Name        string            `json:"name"`
+		TTL         string            `json:"ttl"`
+		AutoBooking *autoBookingInput `json:"auto_booking"`
 	}
 	if err := decode(w, r, &b); err != nil || strings.TrimSpace(b.Name) == "" || len(b.Name) > 100 {
 		fail(w, http.StatusBadRequest, "credential name (1 through 100 bytes) required; PATs follow your primary cluster")
+		return
+	}
+	policy, err := b.AutoBooking.policy()
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ttl := store.DefaultPATDuration
@@ -50,7 +77,7 @@ func (s *Server) createPAT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	metadata, secret, err := s.Store.CreatePAT(r.Context(), user(r), b.Name, ttl)
+	metadata, secret, err := s.Store.CreatePATWithPolicy(r.Context(), user(r), b.Name, ttl, policy)
 	if err != nil {
 		respond(w, err, nil)
 		return
@@ -77,6 +104,29 @@ func (s *Server) listPATs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.Store.PATs(r.Context(), user(r), all)
 	respond(w, err, rows)
+}
+
+func (s *Server) getPAT(w http.ResponseWriter, r *http.Request) {
+	v, err := s.Store.PAT(r.Context(), user(r), r.PathValue("id"))
+	respond(w, err, v)
+}
+
+func (s *Server) updatePAT(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		AutoBooking *autoBookingInput `json:"auto_booking"`
+		Reason      string            `json:"reason"`
+	}
+	if err := decode(w, r, &b); err != nil || b.AutoBooking == nil || len(b.Reason) > 1000 {
+		fail(w, http.StatusBadRequest, "auto_booking with enabled boolean and selector is required; audit reason must be at most 1000 bytes")
+		return
+	}
+	policy, err := b.AutoBooking.policy()
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	v, err := s.Store.UpdatePATBooking(r.Context(), user(r), r.PathValue("id"), policy, b.Reason)
+	respond(w, err, v)
 }
 
 func (s *Server) revokePAT(w http.ResponseWriter, r *http.Request) {

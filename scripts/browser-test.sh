@@ -43,4 +43,4 @@ fi
 export DEVCTL_TEST_DATABASE_URL="${DEVCTL_TEST_DATABASE_URL:-postgres://devctl:devctl-dev-only@127.0.0.1:54329/devctl?sslmode=disable}"
 export DEVCTL_TEST_ISSUER=http://127.0.0.1:18081/realms/devctl
 export DEVCTL_TEST_WEB_URL=https://127.0.0.1:19090
-go test -race ./tests/integration -run '^TestBrowserAccess$' -count=1 -v
+go test -race ./tests/integration -run '^TestBrowser(Access|AutoBooking)$' -count=1 -v

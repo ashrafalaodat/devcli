@@ -198,7 +198,7 @@ func assertGatewayDenied(t *testing.T, client *http.Client, address, token strin
 		t.Fatalf("gateway should reject this identity/session, status %d", resp.StatusCode)
 	}
 }
-func pluginToken(t *testing.T, raw []byte) string {
+func credentialToken(t *testing.T, raw []byte) string {
 	t.Helper()
 	var c struct {
 		APIVersion string `json:"apiVersion"`

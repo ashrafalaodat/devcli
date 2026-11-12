@@ -1,5 +1,37 @@
 # Gateway verification record
 
+## 2026-11-12: editable PAT automatic booking and two supported clients
+
+Implemented and tested:
+
+- Added optional `auto_booking.enabled` plus equality-label `auto_booking.selector` metadata to PAT creation, listing, single-record reads and edits. Owners edit through SSO; an administrator editing another owner must supply an audit reason. The browser exposes create-time opt-in and per-token editors, including administrator controls. The full CLI supports `token create --auto-book --selector region=eu` and `token update PAT_ID --selector region=us`, `--auto-book=false` or `--clear-selector`. Omitted CLI update fields are preserved; expired/revoked/retired credentials cannot be edited. Policy edits preserve the ID, digest, fixed expiry, downloaded file and current booking.
+- Only an explicitly opted-in, still-valid PAT can allocate on a gateway request with no existing primary. One PostgreSQL transaction revalidates the token, applies the saved labels, reserves a completely unused live/nonmaintenance registration through the existing booking path, assigns primary and records activity. An existing primary always wins, even outside the saved selector. Automatic booking never joins another holder’s shared booking or falls back outside labels. Empty selector permits any unused registration. No matching capacity returns an actionable native-kubectl error. Credential expiry before commit rolls back a new allocation.
+- Migration008 defaults all existing credentials to disabled, preserves revocation/scope/expiry, and retains later edits across restart. Twenty-four simultaneous first-use store calls through two Store instances created exactly one hold; API and six concurrent native kubectl processes also resolved one committed primary. Tests covered unavailable/shared/maintenance/retired environments, strict label syntax, at most32 entries, present-empty versus absent-empty label matching, owner/admin permissions, audit reasons and rejected client query overrides.
+- Real Keycloak browser plus CLI SSO verified the same saved PAT kubeconfig first books EU, keeps EU while its selector is edited to US with the actual CLI, then books US after release without changing token/digest/file/expiry. It retained the primary/policy across restart, returned clear no-match/disabled errors, enforced CSRF and foreign-owner denial, and proved intentional enabled-PAT rebooking after logout. Disabling preferences or revoking the token prevented further automatic allocation. Token refresh and preference reads/edits never allocate.
+- Removed the standalone kubectl subcommand executable, source command, dedicated tests, installer, package script, Makefile target and container build output. Removed its welcome/access cards, renumbered browser access to02, changed the UI to two client choices and updated current README/security/OIDC/OpenAPI documentation. Generic full-CLI credential/heartbeat support and meaningful reservation tests remain. Old historical verification/ADRs are marked superseded rather than presented as current instructions. Existing configurations authored by the removed executable require full-CLI setup or a browser PAT config once; existing PAT files remain usable.
+- Headless Chrome verified default opt-out, creation/edit/clear/disable policy forms, owner/admin audit rules, immutable downloaded config, unchanged current primary, ended-token guards, two-client layout and the existing inactivity/deregistration/PAT/logout/mobile behaviors. The local demo now serves this UI over verified HTTPS9090 and reports schema8. Read-only metadata confirms four live registry entries with four credentials retained and zero normal PATs automatically opted in. No registered remote cluster was contacted or changed.
+
+Commands actually executed (temporary Go/browser files used `/local/workspace/devctl-tmp`):
+
+| Command | Result |
+| --- | --- |
+| `make build` | Passed; only full CLI and backend are built |
+| `make test` | Passed with race detection; external-service cases skip without their configuration |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/store ./internal/model -count=1` | Passed; focused store/model run9.189s/1.028s |
+| `DEVCTL_TEST_DATABASE_URL=… go test -race ./internal/api ./internal/browser -count=1` | Passed10.963s/2.368s |
+| `make demo-test` | Passed; all internal packages with real PostgreSQL (API12.952s, store11.300s), then actual Keycloak/CLI/kubectl integration25.152s (manual7.51s, stable-primary16.62s). Browser cases explicitly skipped here and ran separately below |
+| `./scripts/browser-test.sh` | Passed5.580s; existing browser suite2.74s plus new automatic-booking/browser/CLI suite1.82s, against a disposable local Keycloak, isolated schemas and TLS protocol fixtures |
+| `node internal/webui/testdata/primary-ui.cjs` with installed Playwright | Passed; headless Chrome two-client and editable-policy contracts |
+| `go test -race ./internal/cli -count=1` | Passed2.446s; new creation/update/selector validation and standalone-client removal regressions |
+| `go vet ./...`, JavaScript/shell syntax, `git diff --check` | Passed |
+| OpenAPI reference/path-parameter validation, migration008 comparison and removed-client source/build checks | Passed |
+| Verified local backend restart, `/readyz`, served HTML/JS, read-only schema/registry/preference counts | Passed; schema8,4 live registrations/credentials,0 existing PATs automatically enabled |
+| `./scripts/package-client.sh` | Passed; current Linux full-CLI archive rebuilt; old repository-owned plugin binary/archive removed |
+
+An initial integration compile found an unused import, which was removed before the successful runs. The headless harness also exposed a timing assumption in its existing heartbeat check: a one-millisecond sleep was insufficient for the fixture HTTP response. It now awaits that response explicitly, preserving the production heartbeat behavior. Independent review passed; missing-label versus empty-value matching was corrected and regression-tested.
+
+Implemented but not deployment-tested: production proxy/load behavior, corporate identity integration, desktop keyrings/non-Linux runtimes and real Kubernetes workload behavior. The backend container recipe now builds two executables; the application image was not rebuilt in this iteration. Gateway tests use local TLS Kubernetes protocol fixtures, not a real control plane. Kubernetes privilege isolation, workload/storage cleanup, resource accounting and queues remain deferred. Enabled PATs intentionally retain automatic-booking capability after logout until disabled, revoked or expired; this does not provide upstream credential revocation or override IdP/PAT expiry.
+
 ## 2026-11-11: administrator cluster deregistration
 
 Implemented and tested:

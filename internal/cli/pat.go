@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -43,12 +44,26 @@ func (c *Client) addPATCommands(root *cobra.Command) {
 		return c.print(out)
 	}})
 	var name, ttl, output string
+	var autoBook bool
+	var selectors []string
 	create := &cobra.Command{Use: "create", Short: "Write a one-time PAT kubeconfig and print only its path", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		body := map[string]any{"name": name, "ttl": ttl}
+		if cmd.Flags().Changed("auto-book") || cmd.Flags().Changed("selector") {
+			selector, err := personalSelector(selectors)
+			if err != nil {
+				return err
+			}
+			policy := model.AutoBookingPolicy{Enabled: autoBook, Selector: selector}
+			if err = model.ValidateAutoBookingPolicy(policy); err != nil {
+				return err
+			}
+			body["auto_booking"] = policy
+		}
 		var result struct {
 			PAT        store.PAT `json:"pat"`
 			Kubeconfig string    `json:"kubeconfig"`
 		}
-		if err := c.request(cmd.Context(), "POST", "/v1/pats", map[string]string{"name": name, "ttl": ttl}, "", &result); err != nil {
+		if err := c.request(cmd.Context(), "POST", "/v1/pats", body, "", &result); err != nil {
 			return personalIssuanceError(err)
 		}
 		if !personalTokenID.MatchString(result.PAT.ID) {
@@ -82,7 +97,10 @@ func (c *Client) addPATCommands(root *cobra.Command) {
 	create.Flags().StringVar(&name, "name", "CLI personal credential", "Credential display name")
 	create.Flags().StringVar(&ttl, "ttl", "8h", "Credential duration, from 1m through 168h")
 	create.Flags().StringVar(&output, "output", "", "New private output file (default: profile directory)")
+	create.Flags().BoolVar(&autoBook, "auto-book", false, "Automatically reserve a matching free cluster when no primary is booked")
+	create.Flags().StringSliceVarP(&selectors, "selector", "l", nil, "Automatic booking equality labels, e.g. region=eu,type=test (empty matches any free cluster)")
 	token.AddCommand(create)
+	c.addPATUpdateCommand(token)
 	var reason string
 	revoke := &cobra.Command{Use: "revoke PAT_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var out any

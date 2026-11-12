@@ -17,17 +17,15 @@ func TestStatusShowsInactivityDeadlineWithoutRecordingActivity(t *testing.T) {
 	identity := testAccessIdentity()
 	session := model.Session{ID: sessionA, Owner: identity.Key(), Cluster: "cluster-a", DisplayName: "Developer", State: "ACTIVE", Primary: true, LastActivityAt: &activity, ExpiresAt: &release}
 	for _, test := range []struct {
-		name   string
-		args   []string
-		plugin bool
-		json   bool
+		name string
+		args []string
+		json bool
 	}{
 		{name: "list", args: []string{"sessions", "--all"}},
 		{name: "session", args: []string{"status", sessionA}},
 		{name: "profile", args: []string{"status"}},
-		{name: "plugin", args: []string{"status"}, plugin: true},
+		{name: "profile JSON", args: []string{"status", "--json"}, json: true},
 		{name: "session JSON", args: []string{"status", sessionA, "--json"}, json: true},
-		{name: "plugin JSON", args: []string{"status", "--json"}, plugin: true, json: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -50,9 +48,6 @@ func TestStatusShowsInactivityDeadlineWithoutRecordingActivity(t *testing.T) {
 			})
 			saveAccessTestToken(t, c)
 			root := newCommand(c)
-			if test.plugin {
-				root = newPluginCommand(c)
-			}
 			root.PersistentPreRunE = nil
 			root.SetArgs(test.args)
 			if err := root.Execute(); err != nil {

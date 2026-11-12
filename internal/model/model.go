@@ -77,7 +77,7 @@ func Match(c Cluster, b Booking) bool {
 		return false
 	}
 	for k, v := range b.Selector {
-		if c.Labels[k] != v {
+		if actual, present := c.Labels[k]; !present || actual != v {
 			return false
 		}
 	}

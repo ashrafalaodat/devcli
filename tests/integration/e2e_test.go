@@ -308,10 +308,10 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal("gateway kubeconfig delivery failed", err)
 	}
 	if bytes.Contains(saved, []byte(upstreamToken)) || bytes.Contains(saved, []byte(upstream.Server.URL)) || bytes.Contains(saved, []byte("client-key-data")) || !bytes.Contains(saved, []byte("exec:")) || !bytes.Contains(saved, []byte(env.api+"/k8s")) {
-		t.Fatal("generated kubeconfig must contain only gateway metadata and the exec plugin")
+		t.Fatal("generated kubeconfig must contain only gateway metadata and the CLI credential helper")
 	}
-	aliceGatewayToken := pluginToken(t, env.run(alice, "credential"))
-	bobGatewayToken := pluginToken(t, env.run(bob, "credential"))
+	aliceGatewayToken := credentialToken(t, env.run(alice, "credential"))
+	bobGatewayToken := credentialToken(t, env.run(bob, "credential"))
 	if output := runKubectl(t, path, "get", "--raw=/version"); !bytes.Contains(output, []byte("v1.35.1-fixture")) {
 		t.Fatal("kubectl version response not forwarded")
 	}
@@ -415,7 +415,7 @@ func TestEndToEnd(t *testing.T) {
 	t.Log("exclusive conflicts, sharing consent, gateway ownership, secret-free config, real kubectl apply/logs/exec/port-forward/watch, child environment, refresh, logout, and restart passed")
 	// Inactivity release is enforced server-side without a running CLI.
 	exp := session(t, env.run(alice, "start", "--cluster", "alpha"))
-	expiryToken := pluginToken(t, env.run(alice, "credential"))
+	expiryToken := credentialToken(t, env.run(alice, "credential"))
 	if _, err = database.Pool.Exec(context.Background(), "UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", exp.ID); err != nil {
 		t.Fatal(err)
 	}

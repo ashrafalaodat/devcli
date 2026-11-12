@@ -10,7 +10,7 @@ const assets = path.resolve(__dirname, '../assets');
 const alice = {issuer: 'https://issuer.test', subject: 'alice', name: 'alice', display_name: 'Alice <img src=x onerror=alert(1)>', email: 'alice@example.test', admin: false};
 const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'admin', display_name: 'Administrator', email: 'admin@example.test', admin: true};
 const state = {
-  primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, pats: [], mutations: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
+  primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, patSerial: 0, pats: [], mutations: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: '2026-01-01T00:00:00Z', expires_at: '2026-01-01T04:00:00Z', reason: 'fixture'})),
 };
 let origin;
@@ -32,7 +32,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/web/session' && state.signedOut && !admin) { reply(res, 401, {error: 'signed out'}); return; }
       const routes = {
         '/web/session': {user: admin ? administrator : alice, owner_id: admin ? 'admin' : 'alice', csrf_token: admin ? 'csrf-admin' : 'csrf-alice', expires_at: '2099-01-01T00:00:00Z'},
-        '/v1/profile': profile(admin), '/v1/clusters': clusters(), '/v1/sessions': sessionRows(), '/v1/pats': state.pats,
+        '/v1/profile': profile(admin), '/v1/clusters': clusters(), '/v1/sessions': sessionRows(), '/v1/pats': state.pats.filter(p => url.searchParams.get('all') === 'true' && admin || p.owner === (admin ? 'admin' : 'alice')),
         '/v1/admin/settings': {default_max_bookings: state.defaultLimit, inactivity_grace_period: state.inactivityGrace}, '/v1/admin/developers': [profile(false), profile(true)], '/v1/admin/audit': [],
       };
       if (url.pathname.startsWith('/v1/admin/') && !admin) { reply(res, 403, {error: 'administrator required'}); return; }
@@ -71,8 +71,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/v1/pats' && req.method === 'POST') {
       assert.equal(Object.hasOwn(body, 'session_id'), false, 'personal credential must not select a session');
-      const pat = {id: 'p-fixture', owner: 'alice', name: body.name, scope: 'kubernetes:primary', created_at: '2026-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z'}; state.pats.push(pat);
-      reply(res, 201, {pat, kubeconfig: 'apiVersion: v1\nkind: Config\nclusters:\n- name: gateway\n  cluster:\n    server: https://gateway.example.test/k8s\nusers:\n- name: personal\n  user:\n    token: dcpat_UI_FIXTURE_ONLY\n'}); return;
+      assert.equal(body.ttl, '8h', 'PAT access duration remains independently configurable');
+      const pat = {id: `p-fixture-${++state.patSerial}`, owner: admin ? 'admin' : 'alice', name: body.name, scope: 'kubernetes:primary', created_at: '2026-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z', auto_booking: structuredClone(body.auto_booking || {enabled: false, selector: {}})}; state.pats.push(pat);
+      reply(res, 201, {pat, kubeconfig: 'apiVersion: v1\nkind: Config\nclusters:\n- name: gateway\n  cluster:\n    server: https://gateway.example.test/k8s\nusers:\n- name: personal\n  user:\n    token: dcpat_UI_FIXTURE_' + state.patSerial + '_ONLY\n'}); return;
+    }
+    if (/^\/v1\/pats\/[^/]+$/.test(url.pathname) && req.method === 'PATCH') {
+      const pat = state.pats.find(p => p.id === url.pathname.split('/').at(-1));
+      if (!pat) { reply(res, 404, {error: 'credential not found'}); return; }
+      if (!admin && pat.owner !== 'alice') { reply(res, 403, {error: 'owner required'}); return; }
+      if (admin && pat.owner !== 'admin' && !body.reason?.trim()) { reply(res, 400, {error: 'administrator audit reason required'}); return; }
+      if (pat.revoked_at || Date.parse(pat.expires_at) <= Date.now()) { reply(res, 409, {error: 'credential ended'}); return; }
+      assert.equal(typeof body.auto_booking.enabled, 'boolean'); assert.equal(typeof body.auto_booking.selector, 'object');
+      pat.auto_booking = structuredClone(body.auto_booking); reply(res, 200, pat); return;
     }
     if (url.pathname === '/v1/admin/settings' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.defaultLimit = body.default_max_bookings; state.inactivityGrace = body.inactivity_grace_period; reply(res, 200, {status: 'updated'}); return; }
     if (url.pathname === '/v1/admin/developers/alice' && req.method === 'PATCH' && admin) { assert.ok(body.reason); state.override = body.max_bookings; reply(res, 200, {status: 'updated'}); return; }
@@ -102,6 +112,9 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#booking-form [name=ttl]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Renew lease', exact: true}).count(), 0);
     assert.equal(await page.locator('#pat-form [name=ttl]').count(), 1, 'PAT lifetime stays independent');
+    assert.equal(await page.locator('#pat-auto-booking').isChecked(), false, 'automatic booking requires explicit opt-in');
+    assert.equal(await page.locator('.access-card').count(), 2); assert.equal(await page.getByRole('heading', {name: 'kubectl plugin', exact: true}).count(), 0);
+    assert.equal((await page.locator('body').textContent()).includes('kubectl devctl'), false, 'standalone kubectl plugin instructions are removed');
     const activity = () => state.mutations.filter(r => r.path === '/v1/activity');
     await page.clock.runFor(90000);
     assert.equal(activity().length, 0, 'idle open tab must not renew a reservation');
@@ -116,7 +129,8 @@ const server = http.createServer(async (req, res) => {
     const firstCount = activity().length;
     await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.clock.runFor(15000);
     assert.equal(activity().length, firstCount, 'interaction heartbeat must be throttled');
-    await page.clock.runFor(15000); await page.waitForTimeout(1);
+    const delayedActivityResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/v1/activity' && response.request().method() === 'POST');
+    await page.clock.runFor(15000); await delayedActivityResponse;
     assert.equal(activity().length, firstCount + 1, 'one pending real interaction gets one delayed send');
     await page.clock.runFor(120000);
     assert.equal(activity().length, firstCount + 1, 'a prior interaction must not renew itself indefinitely');
@@ -142,7 +156,45 @@ const server = http.createServer(async (req, res) => {
     await page.getByRole('button', {name: 'Overview', exact: false}).click();
     await page.locator('#booking-cluster').selectOption('c'); await page.locator('#booking-submit').click();
     await page.locator('#primary-summary h3').filter({hasText: 'Cluster C'}).waitFor();
-    await page.getByRole('button', {name: 'Access & tokens', exact: false}).click(); await page.getByRole('cell', {name: 'Follows primary cluster'}).waitFor();
+    await page.getByRole('button', {name: 'Access & tokens', exact: false}).click(); await page.getByRole('cell', {name: 'Follows primary cluster'}).first().waitFor();
+    const originalPrimary = state.primary, originalToken = structuredClone(state.pats[0]);
+    assert.deepEqual(originalToken.auto_booking, {enabled: false, selector: {}}, 'default download must not silently allow allocation');
+    const policyPatches = () => state.mutations.filter(r => r.method === 'PATCH' && r.path.startsWith('/v1/pats/'));
+    const tokenEditor = id => page.locator(`#pat-list .pat-policy-editor[data-pat-id="${id}"]`);
+    await tokenEditor(originalToken.id).locator('summary').click();
+    await tokenEditor(originalToken.id).locator('input[name=enabled]').check();
+    await tokenEditor(originalToken.id).locator('input[name=selector]').fill('region=eu,test=');
+    await tokenEditor(originalToken.id).getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await page.locator('#pat-list .pat-policy-summary').filter({hasText: 'Automatic: region=eu,test='}).waitFor();
+    assert.deepEqual(policyPatches().at(-1).body, {auto_booking: {enabled: true, selector: {region: 'eu', test: ''}}});
+    assert.equal(state.primary, originalPrimary, 'editing preferences must not replace an active primary');
+    assert.deepEqual({...state.pats[0], auto_booking: originalToken.auto_booking}, originalToken, 'editing must preserve identity, lifetime and credential metadata');
+    assert.equal(fs.readFileSync(await download.path(), 'utf8'), content, 'editing preferences must not replace the downloaded kubeconfig or secret');
+    await tokenEditor(originalToken.id).locator('summary').click();
+    await tokenEditor(originalToken.id).locator('input[name=selector]').fill('region');
+    const patchesBeforeInvalid = policyPatches().length;
+    await tokenEditor(originalToken.id).getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await page.locator('#notification.error').filter({hasText: 'key=value'}).waitFor(); assert.equal(policyPatches().length, patchesBeforeInvalid);
+    await tokenEditor(originalToken.id).locator('input[name=selector]').fill('');
+    await tokenEditor(originalToken.id).getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await page.locator('#pat-list .pat-policy-summary').filter({hasText: 'Automatic: Any free cluster'}).waitFor();
+    assert.deepEqual(policyPatches().at(-1).body, {auto_booking: {enabled: true, selector: {}}}, 'empty selector deliberately matches any free cluster');
+    await tokenEditor(originalToken.id).locator('summary').click(); await tokenEditor(originalToken.id).locator('input[name=enabled]').uncheck();
+    await tokenEditor(originalToken.id).getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await page.locator('#pat-list .pat-policy-summary').filter({hasText: 'Automatic booking disabled'}).waitFor();
+    assert.deepEqual(policyPatches().at(-1).body, {auto_booking: {enabled: false, selector: {}}});
+    await page.locator('#pat-auto-booking').check(); await page.locator('#pat-selector').fill('environment=testing,region=eu');
+    await page.locator('#pat-form input[name=name]').fill('Automatic test token');
+    const automaticDownloadPending = page.waitForEvent('download'); await page.locator('#pat-form button[type=submit]').click(); const automaticDownload = await automaticDownloadPending;
+    const automaticContent = fs.readFileSync(await automaticDownload.path(), 'utf8');
+    assert.deepEqual(state.pats[1].auto_booking, {enabled: true, selector: {environment: 'testing', region: 'eu'}});
+    assert.equal(automaticContent.includes('environment'), false, 'selection rules stay on backend rather than in native config');
+    assert.equal(state.primary, originalPrimary); assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 1, 'PAT creation must not allocate');
+    state.pats.push({...originalToken, id: 'p-expired', name: 'Expired fixture', expires_at: '2025-01-01T00:00:00Z'}, {...originalToken, id: 'p-revoked', name: 'Revoked fixture', revoked_at: '2026-01-01T00:00:00Z'}, {...originalToken, id: 'p-bob', owner: 'bob', name: 'Other developer token'});
+    await page.getByRole('button', {name: '↻ Refresh', exact: true}).filter({visible: true}).last().click();
+    await page.locator('#pat-list').getByText('Expired fixture', {exact: true}).waitFor();
+    assert.equal(await tokenEditor('p-expired').count(), 0); assert.equal(await tokenEditor('p-revoked').count(), 0);
+    assert.equal(await page.locator('#pat-list').getByText('Other developer token', {exact: true}).count(), 0, 'owner token listing excludes other developers');
     assert.deepEqual(await page.evaluate(() => ({local: localStorage.length, session: sessionStorage.length})), {local: 0, session: 0});
     await page.setViewportSize({width: 390, height: 844}); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(errors, []);
@@ -150,6 +202,17 @@ const server = http.createServer(async (req, res) => {
     let acceptAdminDialog = true; const adminDialogs = []; adminPage.on('dialog', dialog => { adminDialogs.push(dialog.message()); return acceptAdminDialog ? dialog.accept() : dialog.dismiss(); });
     await adminPage.goto(origin, {waitUntil: 'domcontentloaded'}); await adminPage.locator('#workspace').waitFor({state: 'visible'});
     await adminPage.getByRole('button', {name: 'Administration', exact: false}).click(); await adminPage.locator('#developer-list table').waitFor();
+    const adminTokenEditor = adminPage.locator('#admin-pat-list .pat-policy-editor[data-pat-id="p-fixture-2"]');
+    await adminTokenEditor.locator('summary').click(); await adminTokenEditor.locator('input[name=selector]').fill('region=us');
+    const patchesBeforeAdmin = policyPatches().length;
+    await adminTokenEditor.getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await adminPage.waitForTimeout(10); assert.equal(policyPatches().length, patchesBeforeAdmin, 'administrator changes require an audit reason');
+    await adminTokenEditor.locator('input[name=reason]').fill('  Administrator selector correction  ');
+    await adminTokenEditor.getByRole('button', {name: 'Save preferences', exact: true}).click();
+    await adminPage.locator('#admin-pat-list .pat-policy-summary').filter({hasText: 'Automatic: region=us'}).waitFor();
+    assert.deepEqual(policyPatches().at(-1).body, {auto_booking: {enabled: true, selector: {region: 'us'}}, reason: 'Administrator selector correction'});
+    assert.equal(state.primary, originalPrimary, 'administrator policy edits must not switch the developer primary');
+
     await adminPage.locator('#inactivity-grace-period').fill('2h'); await adminPage.locator('#default-booking-limit').fill('3'); await adminPage.locator('#settings-form input[name=reason]').fill('UI policy test'); await adminPage.locator('#settings-form button').click();
     await adminPage.waitForFunction(() => document.querySelector('#default-booking-limit').value === '3');
     assert.equal(state.inactivityGrace, '2h');
@@ -199,6 +262,6 @@ const server = http.createServer(async (req, res) => {
     const afterLogoutActivity = activity().length; await page.clock.runFor(90000); assert.equal(activity().length, afterLogoutActivity, 'logout clears pending presence');
     assert.equal(state.sessions.filter(s => s.state === 'ACTIVE').length, 0);
     assert.deepEqual(errors, []); await context.close();
-    console.log('Primary UI contracts passed: audited admin deregistration, active-booking/confirmation/conflict guards, registry refresh, per-cluster interaction heartbeat, idle/hidden/polling guards, throttling, inactivity policy, retired booking duration/renewal, limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
+    console.log('Primary UI contracts passed: mutable PAT automatic booking, explicit opt-in, owner/admin policy editing, unchanged native config, two clients, audited admin deregistration, active-booking/confirmation/conflict guards, registry refresh, per-cluster interaction heartbeat, idle/hidden/polling guards, throttling, inactivity policy, retired booking duration/renewal, limits, selection, promotion, no-booking PAT download, stable config, admin override/reset, logout preserving PATs, CSRF, text escaping, storage and mobile layout.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => {console.error(error.stack); server.close(); process.exitCode = 1;});

@@ -146,8 +146,8 @@ func TestStableSetupIsOfflinePrivateAndReplacesRetiredBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plugin := cfg.AuthInfos["devctl"].Exec
-	if cfg.Clusters["devctl"].Server != c.URL+"/k8s" || cfg.CurrentContext != "devctl" || plugin == nil || strings.Join(plugin.Args, "|") != "--api|"+c.URL+"|credential" || plugin.InteractiveMode != "IfAvailable" {
+	credential := cfg.AuthInfos["devctl"].Exec
+	if cfg.Clusters["devctl"].Server != c.URL+"/k8s" || cfg.CurrentContext != "devctl" || credential == nil || strings.Join(credential.Args, "|") != "--api|"+c.URL+"|credential" || credential.InteractiveMode != "IfAvailable" {
 		t.Fatal("config does not use stable developer gateway")
 	}
 	if bytes.Contains(first, []byte("/sessions/")) || bytes.Contains(first, []byte("--auto")) || bytes.Contains(first, []byte("--session")) || bytes.Contains(first, []byte("token:")) {
@@ -330,5 +330,42 @@ func TestPrimaryHeartbeatRefreshesAuthorizationWithoutClaimingActivity(t *testin
 	}
 	if reads.Load() != 2 || authorizations.Load() != 1 {
 		t.Fatal("worker did not stop when genuine activity became stale", reads.Load(), authorizations.Load())
+	}
+}
+
+func TestAdditionalBookingDoesNotChangePrimarySelection(t *testing.T) {
+	var posts atomic.Int32
+	c, _ := testAccessClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/sessions" {
+			t.Error("start altered primary")
+			w.WriteHeader(400)
+			return
+		}
+		var booking map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&booking); err != nil {
+			t.Error(err)
+		}
+		if _, exists := booking["ttl"]; exists {
+			t.Error("booking still requests a fixed duration")
+		}
+		posts.Add(1)
+		_ = json.NewEncoder(w).Encode(model.Session{ID: sessionB, Cluster: "cluster-b", State: "ACTIVE"})
+	})
+	saveAccessTestToken(t, c)
+	root := newCommand(c)
+	root.PersistentPreRunE = nil
+	root.SetArgs([]string{"start", "--cluster", "cluster-b"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if posts.Load() != 1 {
+		t.Fatal("unexpected requests")
+	}
+	raw, err := os.ReadFile(c.activePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), sessionA) || strings.Contains(string(raw), sessionB) {
+		t.Fatal("booking stored as local selection")
 	}
 }

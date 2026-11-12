@@ -1,12 +1,12 @@
 # devctl
 
-A Go backend, developer CLI, kubectl plugin and browser UI for reserving existing Kubernetes clusters through an authenticated gateway. PostgreSQL stores reservations, developer limits, primary selections, audit records and encrypted upstream kubeconfigs. Experimental SSO uses OIDC Authorization Code with PKCE and local Keycloak.
+A Go backend, developer CLI and browser UI for reserving existing Kubernetes clusters through an authenticated gateway. PostgreSQL stores reservations, developer limits, primary selections, audit records and encrypted upstream kubeconfigs. Experimental SSO uses OIDC Authorization Code with PKCE and local Keycloak.
 
 Each developer has **one primary cluster** and one stable gateway kubeconfig. Administrators control how many clusters a developer can hold; the default is **one**. After an administrator permits additional bookings, a developer can book more clusters and switch the primary selection without changing or downloading the kubeconfig again.
 
 ```text
 kubectl + personal gateway credential → /k8s → developer's current primary cluster
-                                             no booking → “no cluster is booked”
+                                             no booking → optional PAT label-based booking
 ```
 
 Original Kubernetes kubeconfigs remain on the backend. The gateway uses the imported identity's existing permissions; it does not create namespaces, change Kubernetes RBAC, install policies, create clusters or delete workloads. A registered kubeconfig can contain cluster-admin privileges. Register only credentials approved for the intended developers. Existing unmanaged credentials can bypass the gateway. See [security and operations](docs/security.md).
@@ -14,9 +14,9 @@ Original Kubernetes kubeconfigs remain on the backend. The gateway uses the impo
 ## Booking and selection rules
 
 - A new developer inherits the administrator's default maximum, initially **1**. An administrator can set an individual override from 1 through 100, or clear it to inherit the default. Both exclusive and shared bookings count toward the limit across every profile, browser, terminal and device for that SSO identity.
-- The first active booking becomes primary. Additional bookings leave the primary unchanged. Select another owned active booking in the UI, with `devctl select CLUSTER_ID`, or with `kubectl devctl switch CLUSTER_ID`.
+- The first active booking becomes primary. Additional bookings leave the primary unchanged. Select another owned active booking in the UI or with `devctl select CLUSTER_ID`.
 - The backend resolves the primary for every Kubernetes request. Switching applies globally. Open watch, exec and port-forward connections to the previous primary are closed after the authorization recheck; operations already accepted by Kubernetes are not rolled back or migrated.
-- Stopping or expiring the primary promotes the oldest remaining active booking. With no active booking, the primary is empty and Kubernetes requests return **“no cluster is booked”**. Login, setup, credential refresh and kubectl never book a cluster implicitly.
+- Stopping or expiring the primary promotes the oldest remaining active booking. With no primary, ordinary CLI access and manual-only PATs return **“no cluster is booked”**. An explicitly opted-in PAT can instead reserve a matching unused cluster on its next Kubernetes request. Login, setup, preference edits, token creation and refresh never allocate.
 - Bookings are exclusive by default. Another developer can join only after the controlling holder enables sharing. Sharing permits two holders by default, configurable per cluster from 2 through 10. Participants see names and contact information for manual coordination.
 - Only the controlling holder can enable or disable sharing. Disabling sharing blocks new joins without evicting current holders. If the controlling holder leaves, the oldest participant becomes controller and sharing resets to private.
 - Bookings remain reserved while that cluster is being used, then auto-release after the administrator’s inactivity period: **4h by default**, configurable from 1m through 168h. Kubernetes requests and authorized open streams, explicit primary selection, and real interaction with the visible browser page count. Only the selected cluster is extended; other held bookings expire independently. Idle tabs, status polling and authentication refresh do not extend bookings.
@@ -36,7 +36,6 @@ This version replaces session-specific URLs and fixed automatic bindings. Existi
 
 - Browser: sign in and download a new personal kubeconfig.
 - Full CLI: run `devctl setup` and use its printed path.
-- Plugin: run `kubectl devctl setup` and use its printed path.
 
 After this one-time update, keep the same config across cluster selections and new bookings. Default limits apply to new bookings; users already above the new limit keep their existing reservations. No global `~/.kube/config` is overwritten. [ADR 005](docs/adr-005.md) records this change and supersedes older connection-flow decisions.
 
@@ -76,17 +75,16 @@ ssh -L 9090:127.0.0.1:9090 \
     -L 18000:127.0.0.1:18000 user@SERVER
 ```
 
-Open the exact **https://127.0.0.1:9090/** address in the laptop browser and trust only the public `.demo/tls/ca.crt`. The browser flow uses ports 9090 and 8081; port 18000 is the CLI/plugin loopback callback. In the remote terminal, set `DEVCTL_NO_BROWSER=1`, then open the printed login URL unchanged on the laptop. Use the same browser and host throughout a login. Callback ports support one CLI/plugin browser login at a time.
+Open the exact **https://127.0.0.1:9090/** address in the laptop browser and trust only the public `.demo/tls/ca.crt`. The browser flow uses ports 9090 and 8081; port 18000 is the CLI loopback callback. In the remote terminal, set `DEVCTL_NO_BROWSER=1`, then open the printed login URL unchanged on the laptop. Use the same browser and host throughout a login. Callback ports support one CLI browser login at a time.
 
-## Three ways to connect
+## Two ways to connect
 
 | Client | Installation | Authentication | Booking controls |
 | --- | --- | --- | --- |
 | Full CLI | `devctl` | Short-lived access token and refresh token in the OS credential store | Full developer and approved administrator operations |
-| kubectl plugin | `kubectl-devctl` | Same SSO and refresh mechanism as the CLI | Login, setup, status, primary switching and logout |
 | Browser | Stock kubectl only | Browser SSO, then one expiring and revocable personal gateway token | UI booking, primary selection and approved administrator operations |
 
-All three use `/k8s` and the same server-side primary selection. The plugin's smaller command set is a convenience, not a separate security role.
+Both use `/k8s` and the same server-side primary selection. The separate kubectl subcommand executable and its installer/package have been removed; full CLI kubeconfigs still use the standard Kubernetes exec credential helper in `devctl`.
 
 ### Full CLI
 
@@ -130,25 +128,6 @@ eval "$(devctl shell init --shell bash)"
 
 Primary selection lives on the backend. Different terminals/devices using the same identity therefore share it; use separate SSO identities when independent selections are required. For two local logins, set different `DEVCTL_CONFIG_DIR` values before login (for example `.demo/alice` and `.demo/bob`). Profile isolation does not create independent booking limits or primary selections for the same identity.
 
-### kubectl plugin
-
-The demo build places the plugin in `bin`. It must be on PATH for kubectl discovery:
-
-```bash
-source .demo/env
-export PATH="$PWD/bin:$PATH"
-export DEVCTL_NO_BROWSER=1
-
-kubectl devctl --help
-export KUBECONFIG="$(kubectl devctl login)"
-kubectl devctl status
-# Book a cluster in the UI or full CLI if none is currently booked.
-kubectl get namespaces
-kubectl devctl switch OTHER_CLUSTER
-```
-
-`login` authenticates and prints the config path. `setup` writes the same stable metadata without login. Neither books a cluster. The generated exec configuration invokes `kubectl-devctl` itself, so an installed `devctl` is not required. Access-token refresh and refresh-token rotation use the same cross-process lock and credential store as the full CLI. No refresh token is written into the kubeconfig.
-
 ### Browser without another executable
 
 Sign in at **https://127.0.0.1:9090/**. Book an available cluster; the first becomes primary. **Access & tokens** can download your personal kubeconfig before or after booking. On the machine where the file is downloaded:
@@ -159,17 +138,33 @@ export KUBECONFIG=/path/to/devctl-alice.yaml
 kubectl get namespaces
 ```
 
-Switch primary using the overview cards and run kubectl again with that same file. A downloaded PAT is bound to the developer, not to a booking: it remains valid through stopping a booking and booking another, until its own expiry or revocation. With no booking, the gateway returns **“no cluster is booked”**. The PAT cannot book, switch primary, call the control/admin API, or issue other credentials.
+Switch primary using the overview cards and run kubectl again with that same file. A downloaded PAT is bound to the developer, not to a booking: it remains valid through stopping a booking and booking another, until its own expiry or revocation. Without a booking, a manual-only PAT returns **“no cluster is booked”**. An opted-in PAT can request the limited automatic-booking fallback described below. PATs cannot call control/admin APIs, change an existing primary, edit their preferences or issue other credentials.
 
-PAT lifetime defaults to 8h with a 168h maximum. It does not refresh itself. Authenticated Kubernetes use through the PAT extends only the cluster being used; the PAT’s own expiry never slides. Obtain a replacement through SSO after expiry or revocation. Treat the file as a credential; browser downloads cannot guarantee 0600 permissions. Revoking the PAT ends that credential's gateway requests and streams but leaves bookings intact. Logout releases all bookings but preserves PATs. The same valid PAT works again after a new explicit booking; logout does not extend its expiry. Revoke a PAT explicitly when it is no longer wanted.
+PAT lifetime defaults to 8h with a 168h maximum. It does not refresh itself. Authenticated Kubernetes use through the PAT extends only the cluster being used; the PAT’s own expiry never slides. Obtain a replacement through SSO after expiry or revocation. Treat the file as a credential; browser downloads cannot guarantee 0600 permissions. Revoking the PAT ends that credential's gateway requests and streams but leaves bookings intact. Logout releases all bookings but preserves PATs. The same valid PAT works again after another booking; an opted-in PAT can create that booking on a later gateway request. Logout does not disable automatic booking or extend the PAT expiry. Revoke a PAT explicitly when it is no longer wanted.
 
 The full CLI can also manage native-kubectl credentials:
 
 ```bash
 devctl token create --name laptop --ttl 8h  # prints only a new private file path
 devctl token list
+devctl token create --name tests --auto-book --selector region=eu,environment=testing
+devctl token update PAT_ID --selector region=us,environment=development
+devctl token update PAT_ID --auto-book=false
+devctl token update PAT_ID --clear-selector  # keep the enabled setting; match any unused cluster
 devctl token revoke PAT_ID
 ```
+
+Existing configurations authored by the removed standalone client must be replaced once: run `devctl setup` with the full CLI and use its printed path, or download a browser PAT config. Existing PAT kubeconfigs already use stock kubectl and remain valid. No installed user executables or shell startup files are removed automatically.
+
+## Optional automatic booking with a PAT
+
+In **Access & tokens**, enable automatic booking when creating a credential and enter equality labels such as `region=eu,environment=testing`. Alternatively use `devctl token create --auto-book --selector region=eu,environment=testing`. Store the printed kubeconfig path privately and use ordinary kubectl. No extra local executable is required for a PAT configuration.
+
+If the owner already has a primary, the gateway uses it regardless of this PAT’s selector. Otherwise an enabled, valid PAT transactionally reserves the first unused, nonmaintenance registered cluster matching every saved label, makes it primary and forwards the request. It never joins another developer’s shared booking automatically. Unused means no active devctl reservation; the backend does not inspect or remove Kubernetes workloads left behind. An empty selector permits any unused cluster. No matching capacity returns an actionable kubectl error; there is no queue, cluster creation or fallback outside the selector. Concurrent first requests share one reservation across backend instances. Administrator booking limits and normal inactivity expiry still apply.
+
+Use **Your gateway tokens → Edit automatic booking** or `devctl token update PAT_ID` to change the enabled setting or replace/clear the selector. Changes are saved server-side and apply to the next allocation. The PAT ID, token, expiry and downloaded kubeconfig stay unchanged, and an existing primary is not switched or released. Owners edit their own records through SSO; administrators can edit another developer’s record with an audit reason (`--reason` in the CLI). Expired/revoked credentials cannot be edited. The same PAT cannot authenticate to its control endpoint.
+
+Automatic booking is off for existing and newly issued PATs unless explicitly enabled. A valid enabled PAT can book again after stop, inactivity expiry or logout on a later Kubernetes request; disable its automatic-booking setting or revoke it to prevent that capability. Already open streams for the ended booking close normally and are never migrated. The separate kubectl subcommand client has been removed; use the full CLI or browser. [ADR008](docs/adr-008.md) records the decision.
 
 ## Administration
 
@@ -204,10 +199,9 @@ Deregistration removes the stored kubeconfig and hides the cluster from booking/
 
 ```bash
 make client-package       # dist/devctl-client-<os>-<arch>.tar.gz
-make plugin-package       # dist/devctl-plugin-<os>-<arch>.tar.gz
 ```
 
-Each archive contains one executable and `install.sh`. Supply approved API/issuer URLs and optional public CA:
+The archive contains one executable and `install.sh`. Supply approved API/issuer URLs and optional public CA:
 
 ```bash
 ./install.sh --api https://devctl.example.test \
@@ -220,7 +214,7 @@ The installer defaults to `~/.local/bin` and only edits a shell startup file whe
 ```bash
 make test                 # unit/race tests; unconfigured real-service suites skip
 make test-db              # PostgreSQL-backed reservation, API and browser tests
-make demo-test            # real Keycloak, CLI/plugin/backend, local TLS API fixtures
+make demo-test            # real Keycloak, CLI/backend, local TLS API fixtures
 make browser-test         # isolated Keycloak browser/PAT/native kubectl test
 ```
 

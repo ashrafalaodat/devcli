@@ -48,14 +48,14 @@
     try { await work(); } catch (error) { notify(error.message || 'The request could not be completed.', true); }
     finally { if (control) control.disabled = control.dataset.limitBlocked === 'true'; }
   }
-  function parseLabels(raw) {
+  function parseLabels(raw, allowEmptyValues = false) {
     const out = {};
     for (const field of raw.split(',')) {
       const entry = field.trim(); if (!entry) continue;
       const at = entry.indexOf('=');
-      if (at < 1 || at === entry.length - 1) throw new Error('Labels must use comma-separated key=value pairs.');
+      if (at < 1 || (!allowEmptyValues && at === entry.length - 1)) throw new Error('Labels must use comma-separated key=value pairs.');
       const key = entry.slice(0, at).trim(), value = entry.slice(at + 1).trim();
-      if (!key || !value || Object.hasOwn(out, key)) throw new Error('Label keys and values must be nonempty, with no duplicate keys.');
+      if (!key || (!allowEmptyValues && !value) || Object.hasOwn(out, key)) throw new Error('Label keys must be nonempty, with no duplicate keys.');
       Object.defineProperty(out, key, {value, enumerable: true, configurable: true, writable: true});
     }
     return out;
@@ -73,8 +73,8 @@
     const name = element('span', null, 'identity-name'); name.append(element('span', u.display_name || u.name || 'Developer'), element('small', u.email || u.name)); node.append(name);
     node.append(pill(u.admin ? 'Administrator' : 'Developer', 'neutral'));
     node.append(button('Sign out', 'text', async () => {
-      if (!window.confirm('Sign out and release ALL of your bookings? Your PATs will remain valid. Kubernetes workloads will remain.')) return;
-      await api('/auth/logout', {method: 'POST'}); signedOut(); notify('Signed out. Your bookings were released. Your PATs remain valid.');
+      if (!window.confirm('Sign out and release ALL of your bookings? Your PATs will remain valid. Tokens with automatic booking enabled can reserve again on their next Kubernetes request. Kubernetes workloads will remain.')) return;
+      await api('/auth/logout', {method: 'POST'}); signedOut(); notify('Signed out. Your bookings were released. Your PATs remain valid. Enabled automatic booking tokens can reserve again on their next Kubernetes request.');
     }));
     $('admin-nav').classList.toggle('hidden', !u.admin);
   }
@@ -141,7 +141,7 @@
         await api('/v1/primary', {method: 'POST', body: {cluster: s.cluster}}); await refresh(); notify(`Primary cluster changed to ${clusterName(s.cluster)}. Keep using the same kubeconfig.`);
       }));
       if (c && c.controller_session === s.id) actions.append(button(c.shareable ? 'Disable sharing' : 'Allow sharing', 'secondary small', async () => { await sessionAction(s.id, 'share', {shareable: !c.shareable}); await refresh(); notify(c.shareable ? 'New shared bookings are now disabled.' : 'Sharing enabled. Other developers can join this cluster.'); }));
-      actions.append(button('Stop', 'danger small', async () => { if (!window.confirm(`Release your booking on ${clusterName(s.cluster)}? If it is primary, your oldest remaining booking becomes primary. Kubernetes workloads will remain.`)) return; await sessionAction(s.id, 'stop'); await refresh(); notify('Booking released. Your primary selection was updated; personal tokens and Kubernetes workloads were retained.'); })); card.append(actions);
+      actions.append(button('Stop', 'danger small', async () => { if (!window.confirm(`Release your booking on ${clusterName(s.cluster)}? If it is primary, your oldest remaining booking becomes primary. A token with automatic booking enabled can reserve again on its next Kubernetes request. Kubernetes workloads will remain.`)) return; await sessionAction(s.id, 'stop'); await refresh(); notify('Booking released. Personal tokens and workloads were retained; enabled automatic booking tokens can reserve again on their next Kubernetes request.'); })); card.append(actions);
       card.append(element('span', s.id, 'mono booking-id')); node.append(card);
     }
     table($('team-bookings'), ['Cluster', 'Developer / contact', 'Access', 'Auto-release'], state.sessions.filter(s => s.state === 'ACTIVE').map(s => [clusterName(s.cluster), contact(s), pill((cluster(s.cluster) || {}).shareable ? 'Shared' : 'Exclusive', (cluster(s.cluster) || {}).shareable ? 'warning' : 'neutral'), date(s.expires_at)]), 'No active team bookings.');
@@ -179,6 +179,27 @@
   }
   function renderClusters() { clear($('cluster-list')); clear($('maintenance-list')); if (!state.clusters.length) { $('cluster-list').append(element('div', 'No clusters registered. Ask an administrator to register an approved environment.', 'empty')); return; } for (const c of state.clusters) { $('cluster-list').append(clusterCard(c)); if (state.session.user.admin) $('maintenance-list').append(clusterCard(c, true)); } }
   function patState(p) { if (p.revoked_at) return pill('Revoked', 'danger'); if (Date.parse(p.expires_at) <= Date.now()) return pill('Expired', 'neutral'); return pill('Active', 'success'); }
+  function patPolicy(p, admin) {
+    const policy = p.auto_booking || {enabled: false, selector: {}}, selectorText = Object.entries(policy.selector || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(',');
+    const cell = element('div');
+    cell.append(element('span', policy.enabled ? `Automatic: ${selectorText || 'Any free cluster'}` : 'Automatic booking disabled', 'pat-policy-summary'));
+    if (p.revoked_at || Date.parse(p.expires_at) <= Date.now()) { cell.append(element('span', 'Editing unavailable for ended tokens.', 'subtle')); return cell; }
+    const editor = element('details', null, 'pat-policy-editor'); editor.dataset.patId = p.id;
+    editor.append(element('summary', 'Edit automatic booking'));
+    const form = element('form', null, 'pat-policy-form'), enabledLabel = element('label', 'Enable automatic booking', 'checkbox-field'), enabled = element('input');
+    enabled.type = 'checkbox'; enabled.name = 'enabled'; enabled.checked = Boolean(policy.enabled); enabledLabel.prepend(enabled);
+    const selectorLabel = element('label', 'Required labels'), selector = element('input'); selector.name = 'selector'; selector.value = selectorText; selector.placeholder = 'region=eu,type=test'; selector.maxLength = 10000; selector.autocomplete = 'off'; selectorLabel.append(selector);
+    form.append(enabledLabel, selectorLabel, element('p', 'Blank matches any free cluster. Changes apply to the next automatic booking; your existing primary stays selected. The same token and kubeconfig remain valid.', 'field-help'));
+    const foreign = admin && p.owner !== owner(); let reason;
+    if (foreign) { const label = element('label', 'Audit reason'); reason = element('input'); reason.name = 'reason'; reason.required = true; reason.maxLength = 1000; label.append(reason); form.append(label); }
+    const save = element('button', 'Save preferences', 'button secondary small'); save.type = 'submit'; form.append(save);
+    form.addEventListener('submit', event => { event.preventDefault(); run(save, async () => {
+      const body = {auto_booking: {enabled: enabled.checked, selector: parseLabels(selector.value, true)}};
+      if (foreign) { if (!reason.value.trim()) throw new Error('An audit reason is required.'); body.reason = reason.value.trim(); }
+      await api(`/v1/pats/${encodeURIComponent(p.id)}`, {method: 'PATCH', body}); await refresh(); notify('Automatic booking preferences saved. Existing bookings and your downloaded kubeconfig are unchanged.');
+    }); });
+    editor.append(form); cell.append(editor); return cell;
+  }
   function renderPATs() {
     const rows = (pats, admin) => pats.map(p => {
       const title = element('div'); title.append(element('strong', p.name), element('small', p.id, 'mono'));
@@ -191,9 +212,9 @@
         else if (!window.confirm(`Revoke “${p.name}”? Its downloaded kubeconfig will stop working. Bookings and workloads remain.`)) return;
         await api(`/v1/pats/${encodeURIComponent(p.id)}`, {method: 'DELETE', body: {reason: reason.trim()}}); await refresh(); notify('Personal gateway credential revoked.');
       });
-      return [title, access, patState(p), date(p.expires_at), p.last_used_at ? date(p.last_used_at) : 'Not yet', action];
+      return [title, access, patState(p), patPolicy(p, admin), date(p.expires_at), p.last_used_at ? date(p.last_used_at) : 'Not yet', action];
     });
-    const headers = ['Credential', 'Developer / access', 'State', 'Expires', 'Last used', ''];
+    const headers = ['Credential', 'Developer / access', 'State', 'Automatic booking', 'Expires', 'Last used', ''];
     table($('pat-list'), headers, rows(state.pats, false), 'No personal gateway tokens. Download your reusable kubeconfig above; no booking is required to create it.');
     if (state.session.user.admin) table($('admin-pat-list'), headers, rows(state.allPats, true), 'No personal gateway tokens have been issued.');
   }
@@ -289,7 +310,7 @@
   $('booking-form').addEventListener('input', () => delete $('booking-form').dataset.requestKey);
   $('booking-form').addEventListener('change', () => delete $('booking-form').dataset.requestKey);
   submit('pat-form', async (form, data) => {
-    let result = await api('/v1/pats', {method: 'POST', body: {name: String(data.get('name')).trim(), ttl: String(data.get('ttl'))}});
+    let result = await api('/v1/pats', {method: 'POST', body: {name: String(data.get('name')).trim(), ttl: String(data.get('ttl')), auto_booking: {enabled: data.get('auto_booking_enabled') === 'on', selector: parseLabels(String(data.get('auto_booking_selector') || ''), true)}}});
     downloadConfig(result.kubeconfig, `devctl-${state.session.user.name || 'developer'}`); result.kubeconfig = ''; const expiry = result.pat.expires_at; result = null;
     await refresh(); notify(`Kubeconfig downloaded. Set its file permissions to 0600. Access expires ${date(expiry)}.`);
   });
@@ -308,7 +329,7 @@
   submit('release-form', async (form, data) => {
     const id = String(data.get('session_id')), reason = String(data.get('reason')).trim();
     if (!reason) throw new Error('An audit reason is required.');
-    if (!window.confirm('Release this booking? If it is primary, the oldest remaining booking becomes primary. Personal tokens and Kubernetes workloads will remain.')) return;
+    if (!window.confirm('Release this booking? If it is primary, the oldest remaining booking becomes primary. Personal tokens and Kubernetes workloads will remain. Enabled automatic booking tokens can reserve again on their next Kubernetes request.')) return;
     await api(`/v1/admin/sessions/${encodeURIComponent(id)}/release`, {method: 'POST', body: {reason}}); form.reset(); await refresh(); notify('Booking released through administrator controls. Workloads were retained.');
   });
   async function boot() {

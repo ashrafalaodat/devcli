@@ -14,6 +14,7 @@ import (
 
 	"devctl.local/devctl/internal/kube"
 	"devctl.local/devctl/internal/model"
+	"devctl.local/devctl/internal/scheduler"
 	"devctl.local/devctl/internal/store"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -53,6 +54,17 @@ func gatewayStatus(w http.ResponseWriter, code int, reason, message string) {
 }
 func gatewayFailure(w http.ResponseWriter, e error) {
 	switch {
+	case errors.Is(e, scheduler.ErrUnavailable), errors.Is(e, store.ErrBookingLimit):
+		// Preserve an actionable allocation error in native kubectl's DoRaw.
+		message := e.Error()
+		if errors.Is(e, scheduler.ErrUnavailable) {
+			message = "no matching available cluster for automatic booking; an unused cluster must match the saved PAT labels; wait for capacity or edit the preferences"
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, message+"\n")
 	case errors.Is(e, store.ErrNoPrimary):
 		// kubectl discovery and --raw use client-go.DoRaw, which discards a
 		// JSON Status body on errors. Forbidden text preserves the actionable
@@ -131,7 +143,15 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		gatewayStatus(w, 401, "Unauthorized", "invalid or expired credential; sign in or replace the PAT")
 		return
 	}
-	session, version, cluster, ciphertext, e := s.Store.PrimaryConfig(setup, u)
+	var session model.Session
+	var version int64
+	var cluster string
+	var ciphertext []byte
+	if personal {
+		session, version, cluster, ciphertext, e = s.Store.PrimaryPATConfig(setup, rawToken)
+	} else {
+		session, version, cluster, ciphertext, e = s.Store.PrimaryConfig(setup, u)
+	}
 	if e != nil {
 		cancelSetup()
 		gatewayFailure(w, e)

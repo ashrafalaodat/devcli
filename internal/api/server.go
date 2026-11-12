@@ -129,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("POST /v1/pats", s.createPAT)
 	m.HandleFunc("GET /v1/pats", s.listPATs)
+	m.HandleFunc("GET /v1/pats/{id}", s.getPAT)
+	m.HandleFunc("PATCH /v1/pats/{id}", s.updatePAT)
 	m.HandleFunc("DELETE /v1/pats/{id}", s.revokePAT)
 	m.HandleFunc("GET /v1/admin/audit", s.auditEvents)
 	m.HandleFunc("GET /v1/admin/settings", s.settings)

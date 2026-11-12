@@ -189,7 +189,7 @@ func (c *Client) executionEnvironment() ([]clientapi.ExecEnvVar, error) {
 		return nil, e
 	}
 	// Explicit nonsecret configuration prevents a new shell's unrelated defaults
-	// from switching the credential plugin to a different login/profile.
+	// from switching the credential helper to a different login/profile.
 	vars := []clientapi.ExecEnvVar{
 		{Name: "DEVCTL_CONFIG_DIR", Value: filepath.Dir(c.Login.Dir)},
 		{Name: "DEVCTL_OIDC_CONFIG", Value: string(oidc)},
