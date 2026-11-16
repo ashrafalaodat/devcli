@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -27,6 +29,9 @@ import (
 	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/store"
 	"devctl.local/devctl/internal/testutil"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -247,10 +252,172 @@ func TestGatewayClientCertificateAndTLSVerification(t *testing.T) {
 	}
 	resp = request(t, "GET", g.url("/version"), "alice", "")
 	body := readResponse(t, resp)
-	if resp.StatusCode != 502 || strings.Contains(body, "upstream-secret") || strings.Contains(body, g.upstream.URL) {
+	if resp.StatusCode != 502 || !strings.Contains(body, "TLS verification failed") || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") || strings.Contains(body, "upstream-secret") || strings.Contains(body, g.upstream.URL) {
 		t.Fatal("unverified TLS accepted or error leaked credentials", resp.StatusCode, body)
 	}
 }
+
+func TestGatewayDiscoveryTransportFailureIsActionableAndRedacted(t *testing.T) {
+	g := newGateway(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"versions":["v1"]}`)
+	}), false)
+	g.upstream.Close()
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	client, err := rest.UnversionedRESTClientFor(&rest.Config{
+		Host: g.frontend.URL + "/k8s", BearerToken: "alice", Timeout: 5 * time.Second,
+		ContentConfig: rest.ContentConfig{NegotiatedSerializer: serializer.NewCodecFactory(runtime.NewScheme())},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Discovery uses DoRaw internally. JSON application errors previously became
+	// the opaque InternalError("unknown") reported by ordinary kubectl.
+	_, err = client.Get().AbsPath("/api").DoRaw(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "Kubernetes upstream connection failed") || strings.Contains(err.Error(), `"unknown"`) {
+		t.Fatal("native discovery did not retain the actionable connection error", err)
+	}
+	var event map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &event); err != nil || event["cluster_id"] != "cluster" || event["session_id"] != g.session.ID || event["category"] != "connection_failed" {
+		t.Fatal("safe structured gateway diagnosis missing", logs.String(), err)
+	}
+	for _, secret := range []string{"upstream-secret-only", g.upstream.URL, "Bearer alice", "PRIVATE KEY"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Fatal("gateway logs exposed credentials or upstream details")
+		}
+	}
+}
+
+func TestGatewayDiscoveryConfigurationFailureIsActionable(t *testing.T) {
+	g := newGateway(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid server-held credentials reached upstream")
+	}), false)
+	if _, err := g.db.Pool.Exec(t.Context(), "UPDATE clusters SET kubeconfig_ciphertext=$1 WHERE id='cluster'", []byte("invalid encrypted credential material")); err != nil {
+		t.Fatal(err)
+	}
+	client, err := rest.UnversionedRESTClientFor(&rest.Config{
+		Host: g.frontend.URL + "/k8s", BearerToken: "alice", Timeout: 5 * time.Second,
+		ContentConfig: rest.ContentConfig{NegotiatedSerializer: serializer.NewCodecFactory(runtime.NewScheme())},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get().AbsPath("/api").DoRaw(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "Kubernetes upstream credentials are unavailable") || strings.Contains(err.Error(), `"unknown"`) || strings.Contains(err.Error(), "invalid encrypted credential material") {
+		t.Fatal("native discovery lost the safe configuration diagnosis", err)
+	}
+}
+
+func TestGatewayCancellationBeforeResponseDoesNotReturnEmptySuccess(t *testing.T) {
+	for _, end := range []string{"logout", "stop", "db-unavailable"} {
+		t.Run(end, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			g := newGateway(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				<-r.Context().Done() // No upstream headers or JSON have been sent.
+			}), false)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.url("/api"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer alice")
+			type result struct {
+				response *http.Response
+				err      error
+			}
+			done := make(chan result, 1)
+			go func() {
+				response, err := http.DefaultClient.Do(req)
+				done <- result{response, err}
+			}()
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal("upstream request did not start")
+			}
+			status := http.StatusForbidden
+			switch end {
+			case "logout":
+				err = g.db.Logout(t.Context(), g.alice)
+			case "stop":
+				err = g.db.Stop(t.Context(), g.alice, g.session.ID, "test release during discovery", false)
+			case "db-unavailable":
+				g.db.Pool.Close()
+				status = http.StatusServiceUnavailable
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-done:
+				if got.err != nil {
+					t.Fatal("gateway silently closed discovery instead of returning a failure", got.err)
+				}
+				body := readResponse(t, got.response)
+				if got.response.StatusCode != status || !strings.HasPrefix(got.response.Header.Get("Content-Type"), "text/plain") || strings.TrimSpace(body) == "" {
+					t.Fatal("authorization cancellation returned an empty or successful response", got.response.StatusCode, body)
+				}
+				if status == http.StatusForbidden && !strings.Contains(body, "Gateway access ended") {
+					t.Fatal("released booking diagnosis missing", body)
+				}
+			case <-ctx.Done():
+				t.Fatal("gateway did not cancel outstanding discovery")
+			}
+		})
+	}
+}
+
+func TestGatewayClientDisconnectCancelsPendingUpstream(t *testing.T) {
+	started, closed := make(chan struct{}), make(chan struct{})
+	g := newGateway(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(closed)
+	}), false)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.url("/api"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer alice")
+	done := make(chan error, 1)
+	go func() {
+		response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if response != nil {
+			response.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending upstream request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("client disconnect returned an unrelated error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("client request did not cancel")
+	}
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client disconnect retained the upstream request")
+	}
+}
+
 func TestGatewayRejectsTraversalAndRedirects(t *testing.T) {
 	g := newGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://outside.example.test/credential", 302)

@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"io"
 	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -52,6 +56,59 @@ func (s *Server) connection(w http.ResponseWriter, r *http.Request) {
 func gatewayStatus(w http.ResponseWriter, code int, reason, message string) {
 	write(w, code, map[string]any{"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": reason, "message": message, "code": code})
 }
+
+// Discovery uses client-go's DoRaw, which does not decode JSON Status errors.
+// Plain text preserves a safe diagnosis in native kubectl's error message.
+func gatewayTextFailure(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	_, _ = io.WriteString(w, message+"\n")
+}
+
+var errGatewayRedirect = errors.New("upstream redirects are not forwarded")
+
+type gatewayCancellation struct {
+	status   int
+	category string
+	message  string
+}
+
+func (e *gatewayCancellation) Error() string { return e.category }
+
+// Never expose or log raw transport errors: they can contain upstream URLs,
+// query parameters, certificate identities or proxy credentials.
+func gatewayTransportFailure(err error) (string, string) {
+	var verification *tls.CertificateVerificationError
+	var authority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalidCertificate x509.CertificateInvalidError
+	var dns *net.DNSError
+	var network net.Error
+	var operation *net.OpError
+	switch {
+	case errors.Is(err, errGatewayRedirect):
+		return "upstream_redirect", "Kubernetes upstream returned a redirect; ask an administrator to check the registered endpoint"
+	case errors.As(err, &verification), errors.As(err, &authority), errors.As(err, &hostname), errors.As(err, &invalidCertificate):
+		return "tls_verification_failed", "Kubernetes upstream TLS verification failed; ask an administrator to check the registered cluster certificates"
+	case errors.As(err, &dns):
+		return "dns_failed", "Kubernetes upstream name resolution failed; ask an administrator to check backend DNS and cluster connectivity"
+	case errors.As(err, &network) && network.Timeout():
+		return "network_timeout", "Kubernetes upstream connection timed out; ask an administrator to check connectivity from the backend to the selected cluster (including VPN and firewall)"
+	case errors.As(err, &operation) && operation.Op == "dial":
+		return "connection_failed", "Kubernetes upstream connection failed; ask an administrator to check backend connectivity and the registered cluster endpoint"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "upstream_closed", "Kubernetes upstream closed the connection before responding; retry and ask an administrator to check the selected cluster if this continues"
+	default:
+		return "transport_failed", "Kubernetes upstream request failed; ask an administrator to check backend connectivity and the selected cluster"
+	}
+}
+
+func logGatewayFailure(cluster, session, category string) {
+	slog.Warn("Kubernetes gateway request failed", "cluster_id", cluster, "session_id", session, "category", category)
+}
+
 func gatewayFailure(w http.ResponseWriter, e error) {
 	switch {
 	case errors.Is(e, scheduler.ErrUnavailable), errors.Is(e, store.ErrBookingLimit):
@@ -169,21 +226,23 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id := session.ID
+	setupFailure := func(category, message string) {
+		cancelSetup()
+		logGatewayFailure(cluster, id, category)
+		gatewayTextFailure(w, http.StatusBadGateway, message)
+	}
 	raw, e := s.Vault.Open(cluster, ciphertext)
 	if e != nil {
-		cancelSetup()
-		fail(w, 503, "upstream credentials unavailable")
+		setupFailure("credentials_unavailable", "Kubernetes upstream credentials are unavailable; ask an administrator to check the registered cluster configuration")
 		return
 	}
 	if e = kube.Validate(raw); e != nil {
-		cancelSetup()
-		fail(w, 503, "stored cluster configuration is unsupported")
+		setupFailure("configuration_unsupported", "Kubernetes upstream configuration is unsupported; ask an administrator to update the registered cluster configuration")
 		return
 	}
 	cfg, e := clientcmd.RESTConfigFromKubeConfig(raw)
 	if e != nil {
-		cancelSetup()
-		fail(w, 503, "upstream configuration unavailable")
+		setupFailure("configuration_unavailable", "Kubernetes upstream configuration is unavailable; ask an administrator to check the registered cluster configuration")
 		return
 	}
 	// TransportFor uses the original server-held token or client certificate, with
@@ -192,19 +251,18 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	cfg.NextProtos = []string{"http/1.1"}
 	transport, e := rest.TransportFor(cfg)
 	if e != nil {
-		cancelSetup()
-		fail(w, 503, "upstream TLS configuration unavailable")
+		setupFailure("tls_configuration_unavailable", "Kubernetes upstream TLS configuration is unavailable; ask an administrator to check the registered cluster certificates")
 		return
 	}
 	target, e := url.Parse(cfg.Host)
 	if e != nil || target.Scheme != "https" {
-		cancelSetup()
-		fail(w, 503, "invalid upstream endpoint")
+		setupFailure("endpoint_invalid", "Kubernetes upstream endpoint is invalid; ask an administrator to check the registered cluster endpoint")
 		return
 	}
 	cancelSetup()
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	clientContext := r.Context()
+	ctx, cancel := context.WithCancelCause(clientContext)
+	defer cancel(nil)
 	go s.monitorPrimary(ctx, cancel, u, rawToken, id, version, personal)
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -220,14 +278,23 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		Transport:     transport,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) {
-			if r.Context().Err() == nil {
-				fail(w, 502, "Kubernetes upstream unavailable")
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, e error) {
+			if clientContext.Err() != nil {
+				return // The caller disconnected; there is no response to deliver.
 			}
+			var ended *gatewayCancellation
+			if errors.As(context.Cause(ctx), &ended) {
+				logGatewayFailure(cluster, id, ended.category)
+				gatewayTextFailure(w, ended.status, ended.message)
+				return
+			}
+			category, message := gatewayTransportFailure(e)
+			logGatewayFailure(cluster, id, category)
+			gatewayTextFailure(w, http.StatusBadGateway, message)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.Header.Get("Location") != "" {
-				return errors.New("upstream redirects are not forwarded")
+				return errGatewayRedirect
 			}
 			resp.Header.Set("Cache-Control", "no-store")
 			resp.Header.Del("Set-Cookie")
@@ -265,7 +332,7 @@ func stripGatewayHeaders(h http.Header) {
 
 // Each connection stays on the primary it started with. Switching, including an
 // away-and-back switch, changes the version and terminates existing streams.
-func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelFunc, u model.Identity, token, id string, version int64, personal bool) {
+func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelCauseFunc, u model.Identity, token, id string, version int64, personal bool) {
 	interval := s.GatewayRecheckInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -305,7 +372,17 @@ func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelFunc, 
 			}
 			done()
 			if e != nil {
-				cancel()
+				failure := &gatewayCancellation{
+					status: http.StatusServiceUnavailable, category: "authorization_recheck_failed",
+					message: "Gateway authorization could not be confirmed; retry and check the backend if this continues",
+				}
+				if errors.Is(e, store.ErrConflict) || errors.Is(e, store.ErrForbidden) || errors.Is(e, store.ErrNoPrimary) || errors.Is(e, store.ErrNotFound) {
+					failure = &gatewayCancellation{
+						status: http.StatusForbidden, category: "access_ended",
+						message: "Gateway access ended because the booking, primary cluster, or credentials changed; check your booking and sign in again if needed",
+					}
+				}
+				cancel(failure)
 				return
 			}
 		}

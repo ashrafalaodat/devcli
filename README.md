@@ -288,4 +288,18 @@ Clients use `DEVCTL_API`, `DEVCTL_API_CA_FILE`, `DEVCTL_CONFIG_DIR` and optional
 
 Developers need network access to the gateway and IdP; the backend must reach the IdP and registered Kubernetes endpoints, possibly through a VPN. Run the backend outside the clusters it reserves. Both gateway and upstream Kubernetes TLS are verified. Proxies must support long-running responses, WebSocket/SPDY upgrades and the configured public host. Use private CA trust instead of bypassing verification.
 
+### Troubleshooting kubectl discovery errors
+
+Messages from `memcache.go` about the server API group list mean discovery failed before kubectl could list workloads. The gateway's `/readyz` only checks the devctl service; a cluster shown as available has reservation capacity but may have an unreachable Kubernetes endpoint. First check the current primary in the browser or `devctl sessions`, then make bounded requests with the same kubeconfig:
+
+```bash
+kubectl --request-timeout=10s get --raw=/version
+kubectl --request-timeout=10s get --raw=/api
+kubectl --request-timeout=10s get --raw=/apis
+```
+
+A PAT with automatic booking enabled may create a booking if none exists, just as any other Kubernetes request would. Keep the primary unchanged while comparing results: releasing a booking or changing primary closes its outstanding gateway requests.
+
+An administrator should compare these requests from the backend host using the approved original kubeconfig, keeping its credentials private. A TCP timeout before TLS points to endpoint availability, routing, VPN or firewall access; a certificate error requires the correct trusted CA or endpoint identity. Do not bypass TLS verification. If direct requests also fail, fixing kubectl's discovery cache or downloading another gateway config cannot restore upstream connectivity. A successful `/version` alone does not establish that all discovery endpoints or workload operations work.
+
 Corporate OIDC, desktop keyrings, production proxies/load and real-cluster workload behavior require deployment validation. Cluster permission isolation, resource accounting, queueing, automatic cleanup, upstream credential rotation, SAML and opaque provider access tokens remain deferred. The gateway's own opaque PATs are supported separately. See [security](docs/security.md), [organisation SSO checklist](docs/organisation-sso.md), [ADR005](docs/adr-005.md), [ADR006](docs/adr-006.md) and [OpenAPI](docs/openapi.json).

@@ -1,5 +1,29 @@
 # Gateway verification record
 
+## 2026-11-16: actionable gateway discovery failures
+
+Implemented and tested:
+
+- Investigated the reported native kubectl `memcache.go` discovery errors against the existing local backend. Read-only audit timestamps matched the submitted requests: one booking ended during an outstanding request, then a later PAT request selected a different cluster. No diagnostic request through a PAT was used to allocate or switch a live booking.
+- Bounded, verified-TLS GET requests from the backend host used the registered kubeconfigs decrypted only in memory. Clusters 3219 and 4196 timed out after 12 seconds on `/version`, `/api` and `/apis`; HTTP tracing showed TCP connection attempts without a completed connection, before TLS/authentication. Cluster 4617 returned HTTP 200 and valid JSON for `/version`, `/api`, `/apis` and one paginated namespace read in 14–16ms on the final check. Cluster 4156 failed CA verification and was already in maintenance. In-memory comparisons confirmed all four stored endpoints, CA data and credentials matched the original approved files. No credentials, original configs or namespace contents were printed or written to diagnostic files, and no Kubernetes objects were changed.
+- Fixed proxy transport/configuration errors returning application JSON that native client-go discovery discarded as `InternalError("unknown")`. Fixed messages now use sanitized plain text, with DNS, connection, timeout, TLS, redirect and premature-close categories. Logs include only registered cluster/booking IDs and the fixed category, never raw transport errors, endpoint URLs, headers or credentials.
+- Fixed cancellation before upstream headers: internal authorization monitoring carries a cause and returns an explicit 403 for ended access or 503 when authorization cannot be confirmed, rather than an empty HTTP 200. A caller disconnect still cancels the upstream request without writing another response. Existing TLS checks, forwarding, watches and duplex upgrades remain; no blanket timeout was introduced that would terminate long-running operations.
+- Added real client-go `DoRaw` regressions, log-redaction checks, invalid encrypted configuration and TLS verification coverage, plus logout/stop/database-loss cancellation before headers and client-disconnect cleanup. Updated README troubleshooting, security notes and the OpenAPI error content types for all gateway operations.
+
+Commands actually executed:
+
+| Command | Result |
+| --- | --- |
+| Private `go run ./.demo/gateway-diagnosis` probes, including `--compare-only` and `--healthy-only` | Results above; direct read-only requests, original files unchanged, secrets held only in memory |
+| `go test -race ./internal/api -run '^TestGateway' -count=1` with the local test database | Passed 3.858s against disposable schemas and TLS fixtures |
+| `go test -race ./internal/api -count=1` with the local test database | Passed 12.890s |
+| `make test-db` | Passed; store 14.076s, API 16.470s, browser 2.335s; includes forwarding, stream revocation and WebSocket/SPDY upgrade regressions |
+| `go test -race ./tests/integration -count=1 -v` with the local test database and Keycloak issuer | Passed 25.252s; real CLI/SSO/native kubectl flows using disposable TLS API fixtures, including apply/logs/exec/port-forward/watch, refresh and stable-primary recovery. Browser-specific cases explicitly skipped without their separate browser configuration |
+| `make backend-build`, `go vet ./...`, `git diff --check`, OpenAPI JSON/internal-reference validation | Passed; 308 internal references validated |
+| Guarded host-backend restart and verified-CA `/readyz` request | Passed; schema, registrations, encrypted credentials, maintenance, active bookings and primary selections matched their before-restart snapshot |
+
+Remaining external issue: this change does not restore TCP connectivity to clusters 3219/4196 or change cluster 4156's CA trust. Network/cluster administrators must restore or update those endpoints and credentials through an approved process. Reservation availability still does not claim live Kubernetes health. No real-cluster workload creation, corporate identity changes, live booking changes or maintenance changes were performed. Browser UI code and dependencies were unchanged; full container and production-network deployment validation remain outside this fix.
+
 ## 2026-11-12: demo passwords and editable cluster labels
 
 Implemented and tested:
