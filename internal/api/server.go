@@ -6,6 +6,7 @@ import (
 	"devctl.local/devctl/internal/model"
 	"devctl.local/devctl/internal/scheduler"
 	"devctl.local/devctl/internal/store"
+	"devctl.local/devctl/internal/webhook"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,6 +27,7 @@ type Server struct {
 	PublicURL              string
 	GatewayCAData          []byte
 	GatewayRecheckInterval time.Duration
+	WebhookPolicy          webhook.Policy
 }
 type identityKey struct{}
 
@@ -133,6 +135,13 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PATCH /v1/pats/{id}", s.updatePAT)
 	m.HandleFunc("DELETE /v1/pats/{id}", s.revokePAT)
 	m.HandleFunc("GET /v1/admin/audit", s.auditEvents)
+	m.HandleFunc("GET /v1/admin/webhooks", s.webhooks)
+	m.HandleFunc("POST /v1/admin/webhooks", s.saveWebhook)
+	m.HandleFunc("PATCH /v1/admin/webhooks/{id}", s.saveWebhook)
+	m.HandleFunc("GET /v1/admin/webhook-deliveries", s.webhookDeliveries)
+	m.HandleFunc("POST /v1/admin/webhook-deliveries/{id}/retry", s.webhookRecovery)
+	m.HandleFunc("POST /v1/admin/webhook-deliveries/{id}/resolve", s.webhookRecovery)
+	m.HandleFunc("POST /v1/webhooks/deliveries/{id}/complete", s.completeWebhook)
 	m.HandleFunc("GET /v1/admin/settings", s.settings)
 	m.HandleFunc("GET /v1/clusters/{id}/health", s.clusterHealth)
 	m.HandleFunc("GET /v1/admin/health", s.healthMode)
@@ -164,6 +173,10 @@ func (s *Server) Handler() http.Handler {
 		defer cancel()
 		r = r.WithContext(ctx)
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			m.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/webhooks/deliveries/") && strings.HasSuffix(r.URL.Path, "/complete") {
 			m.ServeHTTP(w, r)
 			return
 		}

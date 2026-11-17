@@ -20,7 +20,7 @@ func PickAt(cs []model.Cluster, b model.Booking, now time.Time) (model.Cluster, 
 	// Prefer an empty cluster over joining a shared reservation.
 	for _, shared := range []bool{false, true} {
 		for _, c := range cs {
-			if !model.Match(c, b) || c.Maintenance || !c.HealthEligible(now) {
+			if !model.Match(c, b) || c.Maintenance || c.LifecycleHolds > 0 || !c.HealthEligible(now) {
 				continue
 			}
 			n := len(c.Participants)

@@ -115,7 +115,7 @@ func gatewayFailure(w http.ResponseWriter, e error) {
 		// Preserve an actionable allocation error in native kubectl's DoRaw.
 		message := e.Error()
 		if errors.Is(e, scheduler.ErrUnavailable) {
-			message = "no matching available cluster for automatic booking; an unused cluster must match the saved PAT labels and pass enforced health checks; check cluster health, wait for capacity or edit the preferences"
+			message = "no matching available cluster for automatic booking; an unused cluster must match the saved PAT labels, have no pending lifecycle holds and pass enforced health checks; inspect cluster status, wait for capacity or edit the preferences"
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

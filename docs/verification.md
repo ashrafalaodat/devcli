@@ -1,5 +1,34 @@
 # Gateway verification record
 
+## 2026-11-17: small lifecycle webhooks and completion holds
+
+Implemented and tested:
+
+- Added migration 10 with only two tables: current webhook rules and frozen delivery/run records. The existing audit transaction is the event source; a fixed catalogue exposes 21 business events and excludes reads, gateway activity and webhook administration. Cluster/equality-label filters are validated. Event bodies contain safe identity/resource/label metadata, not free-form audit detail, tokens or kubeconfigs. No target/event bus, provider adapter or workflow DSL was added.
+- Added atomic `cluster_idle` detection for the last shared participant leaving through stop, logout, admin release and batched/implicit expiry. Matching blocking deliveries hold new manual/PAT placement and deregistration, independently of maintenance. Idempotent booking/release retries do not duplicate events. Failed and timed-out blocking work retains its hold; multiple blocking deliveries execute serially per cluster.
+- Added one serial worker per backend with PostgreSQL leases. Fixed HTTPS requests use verified TLS, bound validated DNS addresses, protected IPv4/IPv6 metadata filtering, an exact operator origin allowlist, no redirects or unsupported proxy bypass, a bounded body discard and the earliest of lease/job/five-second request deadlines. Signatures cover ID/time/body and retries keep one idempotency key. Keys remain encrypted in rule/delivery snapshots and are shown once on creation. No destination is allowed by default.
+- Added operation-scoped completion tokens and a dedicated completion route that does not accept normal SSO/PAT credentials as authority. Callback-before-acceptance races, matching/contradictory duplicates, expiry and recovery are handled transactionally. Success resets old health claims/results, records a verification barrier and requires two fresh passes before resolving its hold. Old green or in-flight health cannot be reused. Administrative retry preserves the same delivery/deadline; state-checked resolution requires a reason and confirmation external work stopped.
+- Added the Slate **Events & automations** page and CLI `admin webhooks list/create/update/disable/runs/retry/resolve`. New rules default disabled. Profile/rule version conflicts retain drafts, keys are transient, and delivery actions retain confirmation/error/retry behavior. The GUI shows the latest 100 deliveries and its mobile forms fit 390px. An unchanged rule can still be disabled after its destination is removed from operator policy. Cluster placement labels remain separate from health and manual maintenance.
+- Added a real local Keycloak/browser/actual-backend integration against an owned HTTPS receiver and disposable Kubernetes API fixture. It verifies signatures independently, no reset after the first shared departure, final-release hold, blocked rebooking, scoped callback, pre-callback-green rejection, restart during verification, two new health passes, independent manual maintenance and a generic label-change notification without free-form detail. All receivers and API targets were local fixtures; no real pipeline or cluster was contacted.
+- Updated the receiver protocol, README, OpenAPI and security notes, and replaced the earlier broad lifecycle proposal with the smaller implemented design. ADR 013 records the two-table decision. No dependency or infrastructure service was added.
+- Restarted only the owned local backend. Verified HTTPS readiness and exact served/built UI bundle; migration is 10, rules/deliveries are zero and health remains Disabled. Before/after snapshots confirmed registrations, encrypted credentials, labels, maintenance, bookings, activity and primary selections were preserved. No real receiver was configured or enabled.
+
+Commands actually executed:
+
+| Command | Result |
+| --- | --- |
+| `make build test` | Passed; production assets/binaries, TypeScript, 14 frontend unit tests, shell guards and full Go race suite; unconfigured external-service cases skip |
+| `make demo-test` | Passed; real PostgreSQL isolated suites including API 20.981s, store 20.492s, webhook 3.057s and CLI 3.617s; then actual local Keycloak/CLI/native kubectl regression 25.345s. Browser cases ran separately below |
+| `./scripts/browser-test.sh` | Passed 20.623s, including new real SSO/HTTPS webhook integration 6.34s and all earlier browser access, label, health and automatic-booking flows |
+| `make build frontend-test` and direct final UI harness | Passed; new webhook GUI scenarios plus all previous strict-CSP, secret, activity, booking, health, logout and mobile regressions. Final assets: 62.01 kB CSS and 348.97 kB JavaScript |
+| Focused actual-PostgreSQL webhook store/API tests and local TLS sender/worker race tests | Passed; store 2.259s, API 1.535s, final sender/worker 3.020s; includes parallel claims, snapshots, callback/health fences, destination policy and deadline regressions |
+| `go vet ./...`, shell/JavaScript syntax, `git diff --check`, OpenAPI and Markdown checks | Passed; 408 internal OpenAPI references and 59 local document links validated |
+| Guarded local backend restart, verified-CA readiness, bundle and database snapshot checks | Passed; schema 10, no rules/deliveries, health Disabled, existing data preserved |
+
+Minor final-review fixes aligned the history limit with its label, bounded delivery by the job deadline, blocked AWS/GCP IPv6 metadata addresses and placed UI test screenshots under the ignored root demo directory. No application regression failure remained. The mobile screenshot contains only fictional fixture data and no one-time secret.
+
+Deliberate limits: the receiver must durably deduplicate delivery IDs; HTTP cannot guarantee exactly-once pipeline execution. Already accepted Kubernetes operations, detached Jobs and unmanaged credentials can outlive released access; the integration owns preflight/draining and destructive permissions. Native CI adapters, automatic pipeline cancellation, distributed drain tracking, credential replacement, outbound proxy support and long-term history retention are deferred. Real CI/reinstallation, production VPN/proxy behavior and full container runtime were not tested. The feature sends no webhook until an operator approves origins and an administrator enables a rule.
+
 ## 2026-11-17: durable, opt-in cluster health monitoring
 
 Implemented and tested:

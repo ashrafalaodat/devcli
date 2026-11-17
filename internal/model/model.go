@@ -38,6 +38,7 @@ type Cluster struct {
 	HealthProfile           HealthProfile     `json:"health_profile"`
 	HealthPolicyRevision    int64             `json:"health_policy_revision"`
 	Health                  *ClusterHealth    `json:"health,omitempty"`
+	LifecycleHolds          int               `json:"lifecycle_holds"`
 }
 type Session struct {
 	ID             string     `json:"id"`

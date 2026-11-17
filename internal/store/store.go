@@ -60,8 +60,13 @@ func (t *Tx) now(ctx context.Context) (time.Time, error) {
 	return now.UTC(), e
 }
 func (t *Tx) audit(ctx context.Context, actor, action, id, detail string) error {
-	_, e := t.Exec(ctx, "INSERT INTO audit(actor,action,object_id,detail) VALUES($1,$2,$3,$4)", actor, action, id, detail)
-	return e
+	var eventID int64
+	var at time.Time
+	e := t.QueryRow(ctx, "INSERT INTO audit(actor,action,object_id,detail) VALUES($1,$2,$3,$4) RETURNING id,at", actor, action, id, detail).Scan(&eventID, &at)
+	if e != nil {
+		return e
+	}
+	return t.enqueueWebhooks(ctx, eventID, at, actor, action, id)
 }
 func (s *Store) Audit(ctx context.Context, actor, action, id, detail string) error {
 	return s.update(ctx, func(t *Tx) error { return t.audit(ctx, actor, action, id, detail) })
@@ -121,6 +126,10 @@ func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster,
 		out[i].ConfigurationGeneration = h.ConfigurationGeneration
 		out[i].HealthProfile = h.Profile
 		out[i].HealthPolicyRevision = h.PolicyRevision
+		out[i].LifecycleHolds, err = t.webhookHolds(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
 		populateCluster(&out[i], ss)
 	}
 	return out, nil
@@ -167,7 +176,9 @@ func (t *Tx) expire(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	affected := map[string]bool{}
 	for _, v := range items {
+		affected[v.cluster] = true
 		if e = t.repairPrimary(ctx, v.owner); e != nil {
 			return e
 		}
@@ -175,6 +186,11 @@ func (t *Tx) expire(ctx context.Context) error {
 			return e
 		}
 		if e = t.audit(ctx, "system", "expire", v.id, "inactivity grace period elapsed; booking released without Kubernetes mutation or personal access token revocation"); e != nil {
+			return e
+		}
+	}
+	for cluster := range affected {
+		if e = t.clusterIdle(ctx, "system", cluster); e != nil {
 			return e
 		}
 	}
@@ -372,7 +388,10 @@ func (t *Tx) stop(ctx context.Context, u model.Identity, id, reason string, forc
 	if e = t.repair(ctx, cluster); e != nil {
 		return e
 	}
-	return t.audit(ctx, u.Key(), "release", id, reason)
+	if e = t.audit(ctx, u.Key(), "release", id, reason); e != nil {
+		return e
+	}
+	return t.clusterIdle(ctx, u.Key(), cluster)
 }
 func (s *Store) Stop(ctx context.Context, u model.Identity, id, reason string, force bool) error {
 	return s.update(ctx, func(t *Tx) error { return t.stop(ctx, u, id, reason, force) })

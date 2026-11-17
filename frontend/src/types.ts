@@ -42,6 +42,7 @@ export interface Cluster {
   available: boolean;
   reason: string;
   deregistered_at?: string;
+  lifecycle_holds?: number;
   health?: ClusterHealth;
   configuration_generation?: number;
   health_policy_revision?: number;
@@ -132,7 +133,7 @@ export interface ApiOptions {
 }
 export type ApiClient = <T = unknown>(path: string, options?: ApiOptions) => Promise<T>;
 export type Notify = (message: string, error?: boolean) => void;
-export type Section = 'overview' | 'clusters' | 'access' | 'admin-clusters' | 'admin-people' | 'admin-tokens' | 'admin-audit';
+export type Section = 'overview' | 'clusters' | 'access' | 'admin-clusters' | 'admin-people' | 'admin-tokens' | 'admin-audit' | 'admin-webhooks';
 
 export interface PageProps {
   data: Workspace;
@@ -143,4 +144,35 @@ export interface PageProps {
   requestBooking: (cluster: string) => void;
   selectedBookingCluster?: string;
   bookingRequestVersion?: number;
+}
+
+export interface WebhookRule {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+  cluster_id: string;
+  selector: Record<string, string>;
+  blocking: boolean;
+  idempotent: boolean;
+  enabled: boolean;
+  timeout_seconds: number;
+  version: number;
+}
+export interface WebhookEventType {name: string; description: string; cluster: boolean; blocking: boolean}
+export interface WebhookCatalogue {rules: WebhookRule[]; events: WebhookEventType[]; allowed_origins: string[]; health_mode?: HealthMode}
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event_type: string;
+  event_id: number;
+  cluster_id: string;
+  state: string;
+  reason_code: string;
+  blocking: boolean;
+  attempts: number;
+  http_status?: number;
+  created_at: string;
+  updated_at: string;
+  deadline: string;
 }

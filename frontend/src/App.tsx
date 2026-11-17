@@ -8,6 +8,7 @@ import Overview from './pages/Overview';
 import Clusters from './pages/Clusters';
 import Access from './pages/Access';
 import Admin from './pages/Admin';
+import Webhooks from './pages/Webhooks';
 import type {AuditEvent, BrowserSession, Cluster, DeveloperProfile, Notify, PageProps, PAT, Section, Session, Settings, Workspace} from './types';
 
 const navigation: Array<{id: Section; label: string; short: string; icon: string}> = [
@@ -18,6 +19,7 @@ const navigation: Array<{id: Section; label: string; short: string; icon: string
   {id: 'admin-people', label: 'People & policy', short: 'People & policy', icon: 'people'},
   {id: 'admin-tokens', label: 'Organisation tokens', short: 'Tokens', icon: 'key'},
   {id: 'admin-audit', label: 'Audit log', short: 'Audit', icon: 'audit'},
+  {id: 'admin-webhooks', label: 'Events & automations', short: 'Webhooks', icon: 'arrow'},
 ];
 
 function Brand() {
@@ -164,7 +166,7 @@ function WorkspaceApplication() {
           <main id="main" className="content"><section id="section-overview" className={section === 'overview' ? 'page-section' : 'page-section hidden'} aria-label="My workspace"><Overview {...pages}/></section>
             <section id="section-clusters" className={section === 'clusters' ? 'page-section' : 'page-section hidden'} aria-label="Clusters"><Clusters {...pages}/></section>
             <section id="section-access" className={section === 'access' ? 'page-section' : 'page-section hidden'} aria-label="Access and tokens"><Access {...pages}/></section>
-            {user.admin && adminSection && <section id={`section-${section}`} className="page-section" aria-label={current.label}><Admin {...pages} section={section.slice(6) as 'clusters' | 'people' | 'tokens' | 'audit'}/></section>}
+            {user.admin && adminSection && <section id={`section-${section}`} className="page-section" aria-label={current.label}>{section === 'admin-webhooks' ? <Webhooks {...pages}/> : <Admin {...pages} section={section.slice(6) as 'clusters' | 'people' | 'tokens' | 'audit'}/>}</section>}
           </main><footer className="page-footer"><span>Whole-cluster reservations</span><span>All times UTC · Experimental organisation SSO</span></footer>
         </div>
       </div>}

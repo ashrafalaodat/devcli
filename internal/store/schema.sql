@@ -232,3 +232,26 @@ DROP TRIGGER IF EXISTS devctl_health_configuration_observe ON clusters;
 CREATE TRIGGER devctl_health_configuration_observe AFTER INSERT OR UPDATE ON clusters
  FOR EACH ROW EXECUTE FUNCTION devctl_health_configuration_observe();
 INSERT INTO schema_version VALUES(9) ON CONFLICT DO NOTHING;
+
+-- Simple lifecycle hooks: audit-backed events and a durable outbox/run record.
+CREATE TABLE IF NOT EXISTS webhooks (
+ id text PRIMARY KEY, name text NOT NULL, url text NOT NULL, events text[] NOT NULL,
+ selector jsonb NOT NULL DEFAULT '{}',cluster_id text NOT NULL DEFAULT '',
+ blocking boolean NOT NULL DEFAULT false,enabled boolean NOT NULL DEFAULT false,
+ idempotent boolean NOT NULL DEFAULT false,timeout_seconds integer NOT NULL DEFAULT 3600 CHECK(timeout_seconds BETWEEN 300 AND 86400),
+ version bigint NOT NULL DEFAULT 1,secret_ciphertext bytea NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+ id text PRIMARY KEY,webhook_id text NOT NULL REFERENCES webhooks(id),event_id bigint NOT NULL REFERENCES audit(id),
+ event_type text NOT NULL,cluster_id text NOT NULL DEFAULT '',blocking boolean NOT NULL,
+ url text NOT NULL,secret_ciphertext bytea NOT NULL,body jsonb NOT NULL,
+ state text NOT NULL DEFAULT 'PENDING' CHECK(state IN ('PENDING','AWAITING_CALLBACK','VERIFYING','SUCCEEDED','FAILED','TIMED_OUT','RESOLVED')),
+ reason_code text NOT NULL DEFAULT '',attempts integer NOT NULL DEFAULT 0,http_status integer NOT NULL DEFAULT 0,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),deadline timestamptz NOT NULL,
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),lease_token text,lease_until timestamptz,
+ verify_after timestamptz,verify_sequence bigint NOT NULL DEFAULT 0,
+ UNIQUE(webhook_id,event_id),CHECK((lease_token IS NULL)=(lease_until IS NULL))
+);
+CREATE INDEX IF NOT EXISTS webhook_due ON webhook_deliveries(next_attempt_at,lease_until) WHERE state='PENDING';
+CREATE INDEX IF NOT EXISTS webhook_holds ON webhook_deliveries(cluster_id) WHERE blocking AND state NOT IN ('SUCCEEDED','RESOLVED');
+INSERT INTO schema_version VALUES(10) ON CONFLICT DO NOTHING;

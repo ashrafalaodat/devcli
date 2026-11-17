@@ -202,7 +202,7 @@ func (t *Tx) autoBookPAT(ctx context.Context, u model.Identity, patID string, po
 		return err
 	}
 	for _, cluster := range clusters { // clusters is ordered by immutable ID.
-		if cluster.Maintenance || !cluster.HealthEligible(now) || len(cluster.Participants) != 0 || !model.Match(cluster, model.Booking{Selector: policy.Selector}) {
+		if cluster.Maintenance || cluster.LifecycleHolds > 0 || !cluster.HealthEligible(now) || len(cluster.Participants) != 0 || !model.Match(cluster, model.Booking{Selector: policy.Selector}) {
 			continue
 		}
 		booking, _, err := t.book(ctx, u, model.Booking{Cluster: cluster.ID, Selector: policy.Selector}, "pat-auto-"+uuid.NewString())

@@ -260,6 +260,45 @@ Checks normally run every 30 seconds with jitter, have a 10-second total budget 
 
 The worker uses PostgreSQL leases and configuration/profile versions, survives restarts, and discards stale results. Disabling stops new check claims; a cycle already in flight may finish within its bounded deadline, and its result is rejected. A normal restart preserves fresh observations. Health describes the configured API checks from the backend network path; it does not verify authenticated identity, workload permissions, capacity, CNI or application readiness. All backend replicas must share equivalent egress/trust. See the [health architecture](docs/cluster-health-architecture.md), [security notes](docs/security.md) and [OpenAPI](docs/openapi.json).
 
+## Lifecycle webhooks
+
+Administrators can use **Events & automations** to send selected business events to an approved receiver. A rule contains events, an HTTPS URL, optional cluster/label filters and an optional cluster hold. New rules start disabled. There are only two new tables and one delivery worker; the implementation reuses audit events and PostgreSQL reservation locking.
+
+First approve the receiver's exact origin in the backend deployment environment, then restart the backend normally:
+
+```bash
+export DEVCTL_WEBHOOK_ALLOWED_ORIGINS='https://ci.example.test'
+# Optional public trust bundle for an internal receiver:
+export DEVCTL_WEBHOOK_CA_FILE='/secure/public-ci-ca.pem'
+```
+
+With no allowed origins and rules, no webhooks are sent. Create a disabled rule, configure its one-time signing secret on the receiver, and enable it after reviewing the configuration. The secret is the exact text used as the HMAC key; do not base64-decode it. Receiver URLs cannot contain credentials or query parameters. This first version supports signed receivers, not native provider-specific CI API adapters.
+
+```bash
+devctl admin webhooks list
+devctl admin webhooks create --name 'Inventory updates' \
+  --url https://ci.example.test/devctl --event cluster_labels_update \
+  --selector purpose=development --reason 'Prepare approved integration'
+devctl admin webhooks update WEBHOOK_ID --file rule.json \
+  --expected-version 1 --reason 'Enable the configured receiver'
+devctl admin webhooks runs
+devctl admin webhooks disable WEBHOOK_ID --reason 'Pause future events'
+```
+
+Notifications finish on HTTP 2xx. Only `cluster_idle`—the **last** shared booking ending—can hold a cluster for external work. Blocking requires an idempotent receiver and enabled health monitoring. Release/expiry atomically creates the hold; the worker sends a stable delivery ID, signature and private callback URL/token. The pipeline reports `{"outcome":"succeeded"}` with that operation token, then two fresh passing health cycles resolve the hold. Failure or timeout retains it. Manual maintenance and other holds remain independent. Existing workloads are not deleted by devctl.
+
+Receivers must deduplicate `Idempotency-Key`, validate signatures and launch work asynchronously. The callback's configured public gateway origin must be reachable from the receiver; a laptop-only SSH tunnel is not an inbound route for remote CI. Disabling/editing a rule changes future events, while queued deliveries keep their original configuration. No endpoint-test button or automatic pipeline cancellation is provided.
+
+Use the GUI's delivery history or audited CLI recovery after checking the external job:
+
+```bash
+devctl admin webhooks retry DELIVERY_ID --expected-state FAILED --reason 'Retry the same delivery'
+devctl admin webhooks resolve DELIVERY_ID --expected-state TIMED_OUT \
+  --confirmed-stopped --reason 'External owner confirmed work stopped; cluster reviewed'
+```
+
+Resolving does not cancel a pipeline. Requests already accepted by Kubernetes and detached Jobs may still run after release; the integration owns draining and destructive-action preflight. See the [small lifecycle design and receiver protocol](docs/lifecycle-automations-architecture.md), [security notes](docs/security.md), [ADR013](docs/adr-013.md) and [OpenAPI](docs/openapi.json).
+
 ## Packaging and tests
 
 ```bash
@@ -303,6 +342,9 @@ Run `make demo-up` first. Tests use uniquely named PostgreSQL schemas and dispos
 | `DEVCTL_WEB_CLIENT_SECRET` | Optional confidential web-client secret; backend only |
 | `DEVCTL_WEB_SESSION_TTL` | Browser absolute lifetime, default `8h`, range `1m` through `168h` |
 | `DEVCTL_FRONTEND_DEV_URL` | Optional loopback Vite origin, e.g. `http://127.0.0.1:5173`; development only, unset in production |
+| `DEVCTL_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated exact approved HTTPS receiver origins; empty by default |
+| `DEVCTL_WEBHOOK_CA_FILE` | Optional public PEM trust bundle for receiver TLS; no private keys |
+| `DEVCTL_DEV_WEBHOOK_LOOPBACK=1` | Owned local receiver fixtures only; requires a loopback listener and `DEVCTL_DEV_HTTP=1` |
 | `DEVCTL_DEV_HTTP=1` | Development-only loopback HTTP issuer allowance |
 
 The reservation inactivity period is a durable administrator setting, not a token lifetime or environment variable. `devctl admin settings` displays `inactivity_grace_period` and the default booking count. Reservation activity and expiry are persisted in PostgreSQL; backend restarts resume expiry checks.

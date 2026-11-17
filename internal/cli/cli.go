@@ -470,6 +470,7 @@ func (c *Client) addAdmin(root *cobra.Command) {
 	admin.AddCommand(force)
 	c.addDeregisterCommand(admin)
 	c.addHealthCommands(admin)
+	c.addWebhookCommands(admin)
 	c.addPolicyCommands(admin)
 	root.AddCommand(admin)
 }

@@ -8,6 +8,7 @@ import (
 	"devctl.local/devctl/internal/health"
 	"devctl.local/devctl/internal/kube"
 	"devctl.local/devctl/internal/store"
+	"devctl.local/devctl/internal/webhook"
 	"devctl.local/devctl/internal/webui"
 	"encoding/base64"
 	"encoding/json"
@@ -93,6 +94,10 @@ func run() error {
 	if e = api.ValidatePublicURL(publicURL); e != nil {
 		return e
 	}
+	webhookPolicy, e := configuredWebhookPolicy(addr)
+	if e != nil {
+		return e
+	}
 	var gatewayCA []byte
 	if file := os.Getenv("DEVCTL_GATEWAY_CA_FILE"); file != "" {
 		rawCA, readErr := os.ReadFile(file)
@@ -112,7 +117,7 @@ func run() error {
 	if e != nil {
 		return errors.New("invalid DEVCTL_WEB_SESSION_TTL")
 	}
-	core := (&api.Server{Store: db, Auth: verifier, Vault: vault, PublicURL: publicURL, GatewayCAData: gatewayCA, GatewayRecheckInterval: recheck}).Handler()
+	core := (&api.Server{Store: db, Auth: verifier, Vault: vault, PublicURL: publicURL, GatewayCAData: gatewayCA, GatewayRecheckInterval: recheck, WebhookPolicy: webhookPolicy}).Handler()
 	handler, e := browser.New(browser.Config{PublicURL: publicURL, ClientID: env("DEVCTL_WEB_CLIENT_ID", "devctl-web"), ClientSecret: os.Getenv("DEVCTL_WEB_CLIENT_SECRET"), SessionTTL: webTTL, FrontendDevURL: frontendDevURL}, verifier, db, vault, core)
 	if e != nil {
 		return e
@@ -132,6 +137,15 @@ func run() error {
 		stopHealth()
 		<-healthDone
 	}()
+	webhookContext, stopWebhooks := context.WithCancel(ctx)
+	webhookDone := make(chan struct{})
+	go func() {
+		defer close(webhookDone)
+		if err := webhook.NewWorker(db, vault, webhookPolicy, publicURL).Run(webhookContext); err != nil {
+			slog.Error("webhook worker stopped")
+		}
+	}()
+	defer func() { stopWebhooks(); <-webhookDone }()
 
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -168,6 +182,39 @@ func run() error {
 		return nil
 	}
 	return e
+}
+
+func configuredWebhookPolicy(address string) (webhook.Policy, error) {
+	policy := webhook.Policy{AllowedOrigins: []string{}}
+	for _, origin := range strings.Split(os.Getenv("DEVCTL_WEBHOOK_ALLOWED_ORIGINS"), ",") {
+		if value := strings.TrimSpace(origin); value != "" {
+			policy.AllowedOrigins = append(policy.AllowedOrigins, value)
+		}
+	}
+	if os.Getenv("DEVCTL_DEV_WEBHOOK_LOOPBACK") == "1" {
+		host, _, err := net.SplitHostPort(address)
+		ip := net.ParseIP(host)
+		if err != nil || os.Getenv("DEVCTL_DEV_HTTP") != "1" || host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return policy, errors.New("development webhook loopback requires a loopback backend listener and DEVCTL_DEV_HTTP=1")
+		}
+		policy.AllowLoopback = true
+	}
+	if path := os.Getenv("DEVCTL_WEBHOOK_CA_FILE"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return policy, errors.New("cannot read webhook CA file")
+		}
+		policy.CAPEM, err = kube.PublicCertificates(raw)
+		if err != nil {
+			return policy, errors.New("webhook CA file must contain only public certificates")
+		}
+	}
+	for _, origin := range policy.AllowedOrigins {
+		if err := policy.Validate(origin); err != nil {
+			return policy, errors.New("webhook allowed origins must be approved HTTPS origins without credentials, query or fragment")
+		}
+	}
+	return policy, nil
 }
 
 func validateFrontendDevelopmentListener(addr, frontendDevURL string) error {

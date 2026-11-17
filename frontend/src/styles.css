@@ -3149,3 +3149,18 @@ td > .small, td > .muted, td > strong + span { display: block; font-size: 12px; 
 .health-components li {display:grid;gap:4px;border-top:1px solid var(--border);padding-top:10px}
 .health-components span,.health-components small {font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 @media(max-width:640px) {.health-policy-bar {align-items:stretch;flex-direction:column}.cluster-health {max-width:none}}
+
+.webhook-toolbar {display:flex;align-items:center;gap:1rem;margin:1rem 0;flex-wrap:wrap}
+.webhook-events {border:1px solid var(--border);border-radius:8px;padding:1rem;display:grid;gap:.75rem;max-height:18rem;overflow:auto}
+.webhook-events legend {font-weight:600;padding:0 .3rem}
+.webhook-checkbox {display:flex;align-items:flex-start;gap:.65rem;font-size:.88rem;margin:.5rem 0}
+.webhook-checkbox input {flex:0 0 auto;width:1.1rem;min-height:1.1rem;margin:.15rem 0}
+.webhook-checkbox span {display:grid;gap:.15rem}
+.webhook-checkbox small {font-size:.78rem;color:var(--muted);line-height:1.45}
+.webhook-url {overflow-wrap:anywhere;word-break:break-word;font-size:.8rem}
+#webhook-secret {font-family:ui-monospace,SFMono-Regular,monospace;min-height:6rem;overflow-wrap:anywhere}
+@media(max-width:600px){.webhook-toolbar{align-items:flex-start}.webhook-events{max-height:15rem}}
+
+.webhook-panel-heading {display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.1rem 1.3rem;border-bottom:1px solid var(--border)}
+.webhook-panel-heading h2 {margin:0;font-size:1.05rem}
+.webhook-panel-heading>span {font-size:.8rem;color:var(--muted)}

@@ -18,12 +18,14 @@ func populateCluster(c *model.Cluster, sessions []model.Session) {
 		}
 	}
 	healthAllows := c.Health == nil || c.Health.Eligible(c.Health.EvaluatedAt)
-	c.Available = c.DeregisteredAt == nil && !c.Maintenance && healthAllows && (len(c.Participants) == 0 || c.Shareable && len(c.Participants) < c.MaxParticipants)
+	c.Available = c.DeregisteredAt == nil && !c.Maintenance && c.LifecycleHolds == 0 && healthAllows && (len(c.Participants) == 0 || c.Shareable && len(c.Participants) < c.MaxParticipants)
 	switch {
 	case c.DeregisteredAt != nil:
 		c.Reason = "deregistered; stored Kubernetes credentials removed; booking history retained"
 	case c.Maintenance:
 		c.Reason = "maintenance: new bookings disabled"
+	case c.LifecycleHolds > 0:
+		c.Reason = "new bookings blocked: waiting for lifecycle automation"
 	case !healthAllows:
 		c.Reason = "new bookings blocked: cluster health is " + c.Health.State + " (" + c.Health.ReasonCode + ")"
 	case len(c.Participants) == 0:
@@ -69,6 +71,10 @@ func (s *Store) Cluster(ctx context.Context, id string) (model.Cluster, error) {
 			c.HealthProfile = h.Profile
 			c.HealthPolicyRevision = h.PolicyRevision
 		}
+		c.LifecycleHolds, err = t.webhookHolds(ctx, c.ID)
+		if err != nil {
+			return err
+		}
 		populateCluster(&c, sessions)
 		return nil
 	})
@@ -104,6 +110,11 @@ func (s *Store) Deregister(ctx context.Context, u model.Identity, id, reason str
 		}
 		if held != 0 {
 			return fmt.Errorf("%w: cluster has %d active booking(s); release all bookings before deregistering", ErrConflict, held)
+		}
+		if holds, err := t.webhookHolds(ctx, id); err != nil {
+			return err
+		} else if holds > 0 {
+			return fmt.Errorf("%w: cluster has unresolved lifecycle holds", ErrConflict)
 		}
 		_, err := t.Exec(ctx, `UPDATE clusters SET deregistered_at=clock_timestamp(),
  kubeconfig_ciphertext=NULL,maintenance=true,controller_session=NULL,shareable=false WHERE id=$1`, id)

@@ -5870,6 +5870,771 @@
           }
         ]
       }
+    },
+    "/v1/admin/webhooks": {
+      "get": {
+        "summary": "List administrator webhook rules and event catalogue",
+        "description": "No receiver requests. Secrets are never returned by list.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookCatalogue"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a disabled-by-default webhook rule",
+        "description": "An operator-approved origin is required even for a new disabled rule. Signing secret is encrypted server-side and returned only once; no endpoint test or pipeline is invoked by this request.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSaveResult"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookCreate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/webhooks/{id}": {
+      "patch": {
+        "summary": "Replace a webhook rule using its expected revision",
+        "description": "Preserves the signing key. Queued deliveries retain frozen original settings and holds. An unchanged existing endpoint can be disabled after removal from the operator allowlist.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSaveResult"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookUpdate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/webhook-deliveries": {
+      "get": {
+        "summary": "List the latest safe delivery and hold states",
+        "description": "Administrator-only; default/max 100. No raw payloads, receiver URLs or credentials.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookDelivery"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/v1/admin/webhook-deliveries/{id}/retry": {
+      "post": {
+        "summary": "Retry the same unexpired failed delivery",
+        "description": "Same delivery ID, frozen payload/receiver/key and absolute deadline. Does not create a new pipeline execution. Expired jobs and explicit callback failure cannot be blindly retriggered.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expected_state",
+                  "reason"
+                ],
+                "properties": {
+                  "expected_state": {
+                    "type": "string",
+                    "enum": [
+                      "PENDING",
+                      "AWAITING_CALLBACK",
+                      "VERIFYING",
+                      "SUCCEEDED",
+                      "FAILED",
+                      "TIMED_OUT",
+                      "RESOLVED"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason, bounded to 1000 UTF-8 bytes."
+                  },
+                  "confirmed_stopped": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/webhook-deliveries/{id}/resolve": {
+      "post": {
+        "summary": "Resolve one hold after reviewing stopped external work",
+        "description": "Administrator confirms external work stopped and supplies expected current state/reason. This does not cancel a pipeline or clear other holds, maintenance or enforced health.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expected_state",
+                  "reason",
+                  "confirmed_stopped"
+                ],
+                "properties": {
+                  "expected_state": {
+                    "type": "string",
+                    "enum": [
+                      "PENDING",
+                      "AWAITING_CALLBACK",
+                      "VERIFYING",
+                      "SUCCEEDED",
+                      "FAILED",
+                      "TIMED_OUT",
+                      "RESOLVED"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason, bounded to 1000 UTF-8 bytes."
+                  },
+                  "confirmed_stopped": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/webhooks/deliveries/{id}/complete": {
+      "post": {
+        "summary": "Report one external workflow completion",
+        "description": "Operation-scoped callback token only; browser cookies, JWTs and PATs are insufficient. Success waits for two fresh current-configuration health cycles. Matching duplicates are idempotent; contradictory/expired/unacceptable completion conflicts. Does not directly mark health passing or change maintenance.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rule, delivery or live cluster was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version/state, invalid event/filter combination, disabled required health, expired delivery or incompatible completion/recovery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "failed"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "webhookCompletion": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -5891,6 +6656,12 @@
         "scheme": "bearer",
         "bearerFormat": "PAT",
         "description": "Opaque dcpat_ credential accepted only by /k8s. Uses its developer’s current primary; if absent, only an explicitly enabled PAT can reserve a matching unused cluster from its saved preferences. Cannot call control/admin APIs, edit policy, switch an existing primary, refresh itself or extend its fixed expiry. Default8h/max168h; individually revocable; survives logout."
+      },
+      "webhookCompletion": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "operation callback token",
+        "description": "Receiver capability delivered privately in X-Devctl-Callback-Token, bound to one job and immutable deadline. Accepted only at that job completion route."
       }
     },
     "schemas": {
@@ -6051,6 +6822,11 @@
             "type": "integer",
             "format": "int64",
             "minimum": 1
+          },
+          "lifecycle_holds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Independent unresolved blocking deliveries. Blocks new placement/deregistration without changing maintenance or existing permissions."
           }
         },
         "required": [
@@ -6667,6 +7443,464 @@
         "properties": {
           "mode": {
             "$ref": "#/components/schemas/HealthMode"
+          }
+        }
+      },
+      "WebhookRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "events",
+          "selector",
+          "blocking",
+          "enabled",
+          "idempotent",
+          "timeout_seconds",
+          "version",
+          "secret_present"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Approved HTTPS receiver; credentials, query, fragment and redirects are not supported."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "book",
+                "release",
+                "expire",
+                "cluster_idle",
+                "share",
+                "primary_select",
+                "register",
+                "deregister",
+                "maintenance",
+                "cluster_labels_update",
+                "cluster_health_transition",
+                "cluster_health_profile",
+                "cluster_health_mode",
+                "pat_create",
+                "pat_revoke",
+                "pat_booking_update",
+                "booking_default_limit",
+                "developer_booking_limit",
+                "inactivity_grace_period",
+                "browser_login",
+                "logout"
+              ]
+            }
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 32
+          },
+          "cluster_id": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "idempotent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Receiver durably deduplicates the Idempotency-Key; required for blocking rules."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 86400,
+            "default": 3600
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "secret_present": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WebhookEventType": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "cluster",
+          "blocking"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "book",
+              "release",
+              "expire",
+              "cluster_idle",
+              "share",
+              "primary_select",
+              "register",
+              "deregister",
+              "maintenance",
+              "cluster_labels_update",
+              "cluster_health_transition",
+              "cluster_health_profile",
+              "cluster_health_mode",
+              "pat_create",
+              "pat_revoke",
+              "pat_booking_update",
+              "booking_default_limit",
+              "developer_booking_limit",
+              "inactivity_grace_period",
+              "browser_login",
+              "logout"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "boolean"
+          },
+          "blocking": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WebhookCatalogue": {
+        "type": "object",
+        "required": [
+          "rules",
+          "events",
+          "allowed_origins",
+          "health_mode"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookRule"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEventType"
+            }
+          },
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "health_mode": {
+            "$ref": "#/components/schemas/HealthMode"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "Safe delivery metadata; URL, request body, encrypted secret, callback token and lease internals are excluded. Blocking states other than SUCCEEDED/RESOLVED continue holding placement.",
+        "required": [
+          "id",
+          "webhook_id",
+          "event_id",
+          "event_type",
+          "state",
+          "blocking",
+          "attempts",
+          "created_at",
+          "updated_at",
+          "deadline"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "webhook_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "cluster_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "AWAITING_CALLBACK",
+              "VERIFYING",
+              "SUCCEEDED",
+              "FAILED",
+              "TIMED_OUT",
+              "RESOLVED"
+            ]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "http_status": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 599
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookSaveResult": {
+        "type": "object",
+        "required": [
+          "rule"
+        ],
+        "properties": {
+          "rule": {
+            "$ref": "#/components/schemas/WebhookRule"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Create response only. Copy its exact UTF-8 text as the receiver HMAC key; never base64-decode or log it."
+          }
+        }
+      },
+      "WebhookCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url",
+          "events",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Approved HTTPS receiver; credentials, query, fragment and redirects are not supported."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "book",
+                "release",
+                "expire",
+                "cluster_idle",
+                "share",
+                "primary_select",
+                "register",
+                "deregister",
+                "maintenance",
+                "cluster_labels_update",
+                "cluster_health_transition",
+                "cluster_health_profile",
+                "cluster_health_mode",
+                "pat_create",
+                "pat_revoke",
+                "pat_booking_update",
+                "booking_default_limit",
+                "developer_booking_limit",
+                "inactivity_grace_period",
+                "browser_login",
+                "logout"
+              ]
+            }
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 32
+          },
+          "cluster_id": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "idempotent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Receiver durably deduplicates the Idempotency-Key; required for blocking rules."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 86400,
+            "default": 3600
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Nonblank audit reason, bounded to 1000 UTF-8 bytes."
+          }
+        }
+      },
+      "WebhookUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url",
+          "events",
+          "blocking",
+          "enabled",
+          "idempotent",
+          "timeout_seconds",
+          "expected_version",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Approved HTTPS receiver; credentials, query, fragment and redirects are not supported."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "book",
+                "release",
+                "expire",
+                "cluster_idle",
+                "share",
+                "primary_select",
+                "register",
+                "deregister",
+                "maintenance",
+                "cluster_labels_update",
+                "cluster_health_transition",
+                "cluster_health_profile",
+                "cluster_health_mode",
+                "pat_create",
+                "pat_revoke",
+                "pat_booking_update",
+                "booking_default_limit",
+                "developer_booking_limit",
+                "inactivity_grace_period",
+                "browser_login",
+                "logout"
+              ]
+            }
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 32
+          },
+          "cluster_id": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "idempotent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Receiver durably deduplicates the Idempotency-Key; required for blocking rules."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 86400,
+            "default": 3600
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Nonblank audit reason, bounded to 1000 UTF-8 bytes."
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
           }
         }
       }

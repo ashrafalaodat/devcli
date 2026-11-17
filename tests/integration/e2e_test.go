@@ -33,12 +33,14 @@ type environment struct {
 	log                       bytes.Buffer
 	key                       string
 	certFile, keyFile, caFile string
+	extraEnv                  []string
 }
 
 func (e *environment) start() {
 	e.t.Helper()
 	e.backend = exec.Command(filepath.Join(e.root, "bin/devctld"))
 	e.backend.Env = append(os.Environ(), "DATABASE_URL="+e.dsn, "DEVCTL_LISTEN="+strings.TrimPrefix(strings.TrimPrefix(e.api, "http://"), "https://"), "DEVCTL_ISSUER="+e.issuer, "DEVCTL_MASTER_KEY="+e.key, "DEVCTL_DEV_HTTP=1", "DEVCTL_PUBLIC_URL="+e.api, "DEVCTL_TLS_CERT="+e.certFile, "DEVCTL_TLS_KEY="+e.keyFile, "DEVCTL_GATEWAY_CA_FILE="+e.caFile)
+	e.backend.Env = append(e.backend.Env, e.extraEnv...)
 	e.backend.Stdout = &e.log
 	e.backend.Stderr = &e.log
 	if err := e.backend.Start(); err != nil {
