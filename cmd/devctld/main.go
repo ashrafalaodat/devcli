@@ -5,6 +5,7 @@ import (
 	"devctl.local/devctl/internal/api"
 	"devctl.local/devctl/internal/auth"
 	"devctl.local/devctl/internal/browser"
+	"devctl.local/devctl/internal/health"
 	"devctl.local/devctl/internal/kube"
 	"devctl.local/devctl/internal/store"
 	"devctl.local/devctl/internal/webui"
@@ -117,6 +118,20 @@ func run() error {
 		return e
 	}
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	// Monitoring mode is durable and disabled by default. The worker uses only
+	// registered server-side credentials, without booking or activity paths.
+	healthContext, stopHealth := context.WithCancel(ctx)
+	healthDone := make(chan struct{})
+	go func() {
+		defer close(healthDone)
+		if err := health.NewWorker(db, vault).Run(healthContext); err != nil {
+			slog.Error("cluster health worker stopped")
+		}
+	}()
+	defer func() {
+		stopHealth()
+		<-healthDone
+	}()
 
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)

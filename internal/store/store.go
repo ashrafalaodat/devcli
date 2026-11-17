@@ -106,10 +106,24 @@ func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster,
 		if e = json.Unmarshal(raw, &c.Labels); e != nil {
 			return nil, e
 		}
-		populateCluster(&c, ss)
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	rows.Close()
+	for i := range out {
+		h, err := readHealth(ctx, t, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Health = &h
+		out[i].ConfigurationGeneration = h.ConfigurationGeneration
+		out[i].HealthProfile = h.Profile
+		out[i].HealthPolicyRevision = h.PolicyRevision
+		populateCluster(&out[i], ss)
+	}
+	return out, nil
 }
 
 // When the controller leaves, the oldest participant becomes controller. Sharing
@@ -189,11 +203,18 @@ func (s *Store) Snapshot(ctx context.Context) ([]model.Cluster, []model.Session,
 func (s *Store) Book(ctx context.Context, u model.Identity, b model.Booking, key string) (model.Session, bool, error) {
 	var out model.Session
 	var created bool
+	var resultErr error
 	err := s.update(ctx, func(t *Tx) error {
-		var err error
-		out, created, err = t.book(ctx, u, b, key)
-		return err
+		out, created, resultErr = t.book(ctx, u, b, key)
+		// Expected placement rejections preserve successful expiry/repair work.
+		if errors.Is(resultErr, scheduler.ErrUnavailable) || errors.Is(resultErr, ErrBookingLimit) {
+			return nil
+		}
+		return resultErr
 	})
+	if err == nil {
+		err = resultErr
+	}
 	return out, created, err
 }
 
@@ -246,7 +267,11 @@ func (t *Tx) book(ctx context.Context, u model.Identity, b model.Booking, key st
 		if e != nil {
 			return e
 		}
-		c, e := scheduler.Pick(cs, b)
+		placementNow, e := t.now(ctx)
+		if e != nil {
+			return e
+		}
+		c, e := scheduler.PickAt(cs, b, placementNow)
 		if e != nil {
 			return e
 		}

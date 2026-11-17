@@ -24,7 +24,7 @@ The companion [cluster health architecture](cluster-health-architecture.md) supp
 | [`internal/api/gateway.go`](../internal/api/gateway.go) | Pins requests to a booking and primary version; monitor ends access after release/switch/authorization loss | Add observable draining before destructive external work; preserve normal credential and stream checks |
 | [`cmd/devctld/main.go`](../cmd/devctld/main.go) | Runs API/gateway and periodic expiry work in one process | Start cancellable, bounded automation workers and lease recovery |
 
-Today `clusters.maintenance` only prevents new placements. It does not end an active booking or prove that in-flight Kubernetes operations have stopped. There is no callback API, delivery worker, upstream credential replacement API or cluster health worker yet.
+Today `clusters.maintenance` only prevents new placements. It does not end an active booking or prove that in-flight Kubernetes operations have stopped. At that original baseline there was no callback API, delivery worker, upstream credential replacement API or cluster health worker. Core opt-in health monitoring is now implemented as described in the companion document; the lifecycle automation interfaces here remain proposed.
 
 ## Event catalogue and dynamic subscriptions
 

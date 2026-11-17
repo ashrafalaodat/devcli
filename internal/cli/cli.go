@@ -194,14 +194,18 @@ func newCommand(c *Client) *cobra.Command {
 			return c.print(cs)
 		}
 		w := tabwriter.NewWriter(c.Out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME\tAVAILABLE\tSHAREABLE\tHOLDERS\tLABELS")
+		fmt.Fprintln(w, "ID\tNAME\tAVAILABLE\tHEALTH\tSHAREABLE\tHOLDERS\tLABELS")
 		for _, v := range cs {
 			names := []string{}
 			for _, s := range v.Participants {
 				names = append(names, s.DisplayName+" <"+s.Email+">")
 			}
 			labels, _ := json.Marshal(v.Labels)
-			fmt.Fprintf(w, "%s\t%s\t%t\t%t\t%s\t%s\n", v.ID, v.Name, v.Available, v.Shareable, strings.Join(names, ", "), labels)
+			health := "disabled"
+			if v.Health != nil && v.Health.Mode != "disabled" {
+				health = string(v.Health.Mode) + "/" + v.Health.State
+			}
+			fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%t\t%s\t%s\n", v.ID, v.Name, v.Available, health, v.Shareable, strings.Join(names, ", "), labels)
 		}
 		return w.Flush()
 	}})
@@ -393,7 +397,7 @@ func sessionPath(id string) string { return "/v1/sessions/" + url.PathEscape(id)
 var sessionID = regexp.MustCompile(`^s-[a-f0-9-]{36}$`)
 
 func (c *Client) addAdmin(root *cobra.Command) {
-	admin := &cobra.Command{Use: "admin", Short: "Administrator registry operations (no Kubernetes API calls)"}
+	admin := &cobra.Command{Use: "admin", Short: "Administrator registry and health monitoring operations"}
 	var id, name, file, contextName string
 	var labels []string
 	var maxParticipants int
@@ -465,6 +469,7 @@ func (c *Client) addAdmin(root *cobra.Command) {
 	force.Flags().StringVar(&forceReason, "reason", "", "Audit reason")
 	admin.AddCommand(force)
 	c.addDeregisterCommand(admin)
+	c.addHealthCommands(admin)
 	c.addPolicyCommands(admin)
 	root.AddCommand(admin)
 }

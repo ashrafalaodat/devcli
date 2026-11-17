@@ -1,5 +1,35 @@
 # Gateway verification record
 
+## 2026-11-17: durable, opt-in cluster health monitoring
+
+Implemented and tested:
+
+- Added migration 9 with durable Disabled/Observe/Enforce policy, default Disabled, per-cluster profiles and versioned observations. Current health uses database UTC time; missing, unknown, stale or failing observations block new placement only in Enforce mode. Two consecutive successful cycles establish recovery, and a stale gap resets the streak. Existing reservations, primary selection, credential validity and access remain independent.
+- Added fixed GET-only Kubernetes API probes using existing encrypted static kubeconfigs and verified client-go transports. They preserve the endpoint prefix, embedded token/client certificate, CA/TLS server name and inherited proxy path; reject redirects; and bound deadlines and decompressed body sizes. Required version, readiness and negotiated discovery responses are validated, including aggregated freshness and legacy baseline discovery. An explicit discovery-only profile omits readiness. Public GET success is never presented as identity or workload-permission verification.
+- Added a bounded worker inside `devctld`: four concurrent probes per instance, 30-second jittered scheduling, 10-second cycle budget, 20-second durable leases and bounded rate-limit backoff. Network calls run outside transactions. PostgreSQL claims and publication fence lease token/sequence/expiry, mode, credential generation, profile revision and deregistration. Shutdown cancels work without manufacturing a failed observation. Mode changes fence old claims, and startup preserves current observations.
+- Applied the same fresh-health gate to scheduler/manual/shared booking and PAT fallback. Unhealthy early candidates are skipped, successful booking-key replay preserves the recorded session, and an expected health rejection commits valid expiry housekeeping rather than rolling it back. Tests cover concurrent health failure versus allocation, missing health rows, multiple workers, restart and stale publication after credential/profile/mode changes. Health reads/queueing/probes do not run reservation/activity paths, expire a booking or use a developer PAT.
+- Added protected health inspection, audited mode/check/profile endpoints, safe HTTP errors and strict body validation. Refresh requests coalesce; profile revisions reject stale edits. GUI and CLI show health separately from placement/maintenance, support opt-in modes, check requests and profile changes, and preserve existing holders' primary/access controls. CLI waiting completes after one observation, including `RECOVERING`, and failed checks return exit code 4. Updated native PAT fallback diagnostics to mention enforced health when no candidate can be admitted.
+- Extended the strict-CSP browser contracts for mode opt-in, validation, queue failure/retry, stale-profile draft retention and reload, Enforce gating, stable bookings/PAT/primary and 390px controls. Added a real Keycloak browser integration running the actual backend/worker against owned TLS API fixtures; it verifies disabled mode sends no requests, probes leave activity and PAT use unchanged, recovery needs two cycles, existing access survives health failure, PAT placement skips a failing first candidate, CSRF/roles hold and restart preserves policy/results.
+- Added the matching pinned direct dependency `k8s.io/api v0.35.1` for official discovery types. No dependency version was upgraded and `go.sum` was unchanged. Updated README commands, OpenAPI, security notes, architecture implementation status and ADR 012. This implements health monitoring only; lifecycle automation remains a proposal.
+- Deployed only the verified local host backend and current UI bundle. Readiness and served/built JavaScript comparison passed. Schema is 9, policy is Disabled, and all four registrations remain. Before/after snapshots confirmed stored credentials, labels, maintenance, bookings, activity and primary selections were unchanged. Live health observations and claims remain zero: no registered remote Kubernetes endpoint was probed by this implementation task.
+
+Commands actually executed (Go temporary/cache paths and npm cache used the existing local workspace locations):
+
+| Command | Result |
+| --- | --- |
+| `make build test` | Passed; production frontend and Go binaries, strict TypeScript, 14 frontend unit cases, shell regressions and Go race suite. Unconfigured external-service tests explicitly skip |
+| `make demo-test` | Passed; real PostgreSQL isolated suites, including API 17.025s, store 15.754s, health worker/probe 2.451s and CLI 3.845s; then actual local Keycloak/CLI/native kubectl integration 25.729s. Browser-specific cases skip here and ran separately below |
+| `./scripts/browser-test.sh` | Passed 13.926s; existing browser access, label and automatic booking flows plus new health integration 7.39s, with disposable Keycloak, isolated schemas and TLS API fixtures |
+| `make frontend-test`, then `make build frontend-test` after removing redundant success text | Passed; expanded strict-CSP desktop/mobile contracts and complete earlier UI regressions. Final assets are 60.88 kB CSS and 334.35 kB JavaScript |
+| Focused `go test -race ./internal/api -run '^TestHealthAPI' -count=1` with the local test database | Passed 1.750s; protected endpoints, invalid input, coalescing, profile conflicts, audit, no reservation/credential mutation and generic database errors |
+| Focused model/scheduler/store and health race suites with the local test database | Passed; store 13.093s and final health 2.074s; includes genuine PostgreSQL claim/allocation races and actual verified-TLS probe requests |
+| `go vet ./...`, shell syntax, `git diff --check`, OpenAPI JSON/internal-reference checks | Passed; 353 internal references validated |
+| Guarded backend restart, verified-CA `/readyz`, served/built bundle comparison and read-only database snapshot checks | Passed; migration 9, mode Disabled, four registrations, zero health observations/claims, preserved existing state |
+
+Initial GUI test development corrected fixture navigation/close assumptions and synchronized a controlled search input; the final full browser suite passed. Final review found no material blocker and corrected redundant successful-reason display. No tests or application changes were made to real remote clusters, and no corporate identity system was contacted.
+
+Not deployment-tested or deferred: real Kubernetes targets and production VPN/proxy behavior, full container build/runtime, heterogeneous egress-domain observations, active identity/permission reviews, configurable timing/history/metrics exporters, and lifecycle callback/verification barriers. Current tests use protocol fixtures and do not claim Kubernetes admission, capacity, CNI or workload readiness. Administrators must explicitly enable Observe for approved endpoints and review profile/permission results before Enforce.
+
 ## 2026-11-16: actionable gateway discovery failures
 
 Implemented and tested:

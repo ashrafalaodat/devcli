@@ -23,17 +23,21 @@ func (i Identity) Key() string {
 }
 
 type Cluster struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	Labels            map[string]string `json:"labels"`
-	Maintenance       bool              `json:"maintenance"`
-	ControllerSession string            `json:"controller_session,omitempty"`
-	Shareable         bool              `json:"shareable"`
-	MaxParticipants   int               `json:"max_participants"`
-	Participants      []Session         `json:"participants"`
-	Available         bool              `json:"available"`
-	Reason            string            `json:"reason"`
-	DeregisteredAt    *time.Time        `json:"deregistered_at,omitempty"`
+	ID                      string            `json:"id"`
+	Name                    string            `json:"name"`
+	Labels                  map[string]string `json:"labels"`
+	Maintenance             bool              `json:"maintenance"`
+	ControllerSession       string            `json:"controller_session,omitempty"`
+	Shareable               bool              `json:"shareable"`
+	MaxParticipants         int               `json:"max_participants"`
+	Participants            []Session         `json:"participants"`
+	Available               bool              `json:"available"`
+	Reason                  string            `json:"reason"`
+	DeregisteredAt          *time.Time        `json:"deregistered_at,omitempty"`
+	ConfigurationGeneration int64             `json:"configuration_generation"`
+	HealthProfile           HealthProfile     `json:"health_profile"`
+	HealthPolicyRevision    int64             `json:"health_policy_revision"`
+	Health                  *ClusterHealth    `json:"health,omitempty"`
 }
 type Session struct {
 	ID             string     `json:"id"`
@@ -64,8 +68,9 @@ type DeveloperProfile struct {
 }
 
 type Settings struct {
-	DefaultMaxBookings    int    `json:"default_max_bookings"`
-	InactivityGracePeriod string `json:"inactivity_grace_period"`
+	DefaultMaxBookings    int        `json:"default_max_bookings"`
+	InactivityGracePeriod string     `json:"inactivity_grace_period"`
+	HealthMode            HealthMode `json:"health_mode"`
 }
 type Booking struct {
 	Cluster  string            `json:"cluster,omitempty"`

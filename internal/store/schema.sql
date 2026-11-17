@@ -171,3 +171,64 @@ ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS auto_booking_enabled
 ALTER TABLE personal_access_tokens ADD COLUMN IF NOT EXISTS auto_booking_selector jsonb NOT NULL DEFAULT '{}'
  CHECK(jsonb_typeof(auto_booking_selector)='object');
 INSERT INTO schema_version VALUES(8) ON CONFLICT DO NOTHING;
+
+-- Health monitoring is an explicit rollout choice. Migration never probes a
+-- cluster, changes a reservation, or enables enforcement for existing installs.
+ALTER TABLE application_settings ADD COLUMN IF NOT EXISTS health_mode text NOT NULL DEFAULT 'disabled'
+ CHECK(health_mode IN ('disabled','observe','enforce'));
+ALTER TABLE clusters ADD COLUMN IF NOT EXISTS configuration_generation bigint NOT NULL DEFAULT 1;
+ALTER TABLE clusters ADD COLUMN IF NOT EXISTS health_profile text NOT NULL DEFAULT 'api-ready.v1'
+ CHECK(health_profile IN ('api-ready.v1','discovery-only.v1'));
+ALTER TABLE clusters ADD COLUMN IF NOT EXISTS health_policy_revision bigint NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS cluster_health (
+ cluster_id text PRIMARY KEY REFERENCES clusters(id),
+ observed_state text NOT NULL DEFAULT 'UNKNOWN' CHECK(observed_state IN ('UNKNOWN','RECOVERING','PASSING','FAILING')),
+ reason_code text NOT NULL DEFAULT 'not_checked',
+ result jsonb NOT NULL DEFAULT '{}',
+ observed_configuration_generation bigint NOT NULL DEFAULT 0,
+ observed_policy_revision bigint NOT NULL DEFAULT 0,
+ checked_at timestamptz,
+ last_success_at timestamptz,
+ consecutive_successes integer NOT NULL DEFAULT 0,
+ next_check_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ probe_sequence bigint NOT NULL DEFAULT 0,
+ lease_token text,
+ lease_until timestamptz,
+ started_at timestamptz,
+ requested_at timestamptz,
+ request_id text,
+ CHECK((lease_token IS NULL)=(lease_until IS NULL))
+);
+CREATE INDEX IF NOT EXISTS cluster_health_due ON cluster_health(next_check_at,lease_until);
+INSERT INTO cluster_health(cluster_id) SELECT id FROM clusters ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION devctl_health_configuration_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF OLD.kubeconfig_ciphertext IS DISTINCT FROM NEW.kubeconfig_ciphertext THEN
+  NEW.configuration_generation := OLD.configuration_generation+1;
+ END IF;
+ IF OLD.health_profile IS DISTINCT FROM NEW.health_profile THEN
+  NEW.health_policy_revision := OLD.health_policy_revision+1;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS devctl_health_configuration_fence ON clusters;
+CREATE TRIGGER devctl_health_configuration_fence BEFORE UPDATE ON clusters
+ FOR EACH ROW EXECUTE FUNCTION devctl_health_configuration_fence();
+CREATE OR REPLACE FUNCTION devctl_health_configuration_observe() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  INSERT INTO cluster_health(cluster_id) VALUES(NEW.id) ON CONFLICT DO NOTHING;
+ ELSIF OLD.configuration_generation<>NEW.configuration_generation
+    OR OLD.health_policy_revision<>NEW.health_policy_revision
+    OR OLD.deregistered_at IS DISTINCT FROM NEW.deregistered_at THEN
+  UPDATE cluster_health SET observed_state='UNKNOWN',reason_code='configuration_changed',result='{}',
+   checked_at=NULL,consecutive_successes=0,next_check_at=clock_timestamp(),
+   lease_token=NULL,lease_until=NULL,probe_sequence=probe_sequence+1
+   WHERE cluster_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS devctl_health_configuration_observe ON clusters;
+CREATE TRIGGER devctl_health_configuration_observe AFTER INSERT OR UPDATE ON clusters
+ FOR EACH ROW EXECUTE FUNCTION devctl_health_configuration_observe();
+INSERT INTO schema_version VALUES(9) ON CONFLICT DO NOTHING;

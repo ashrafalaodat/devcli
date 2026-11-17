@@ -42,6 +42,32 @@ export interface Cluster {
   available: boolean;
   reason: string;
   deregistered_at?: string;
+  health?: ClusterHealth;
+  configuration_generation?: number;
+  health_policy_revision?: number;
+  health_profile?: HealthProfile;
+}
+
+export type HealthMode = 'disabled' | 'observe' | 'enforce';
+export type HealthProfile = 'api-ready.v1' | 'discovery-only.v1';
+export interface ClusterHealth {
+  mode: HealthMode;
+  state: 'UNKNOWN' | 'RECOVERING' | 'PASSING' | 'FAILING' | 'STALE';
+  profile: HealthProfile;
+  reason_code: string;
+  checked_at?: string;
+  last_success_at?: string;
+  duration_ms: number;
+  max_age_seconds: number;
+  consecutive_successes: number;
+  readiness_confirmed: boolean;
+  discovery_coverage: string;
+  identity_verification: string;
+  check_pending: boolean;
+  next_check_at?: string;
+  configuration_generation: number;
+  policy_revision: number;
+  components?: Array<{name: string; state: string; reason_code: string; http_status?: number; duration_ms: number}>;
 }
 
 export interface DeveloperProfile {
@@ -74,6 +100,7 @@ export interface PAT {
 export interface Settings {
   default_max_bookings: number;
   inactivity_grace_period: string;
+  health_mode?: HealthMode;
 }
 
 export interface AuditEvent {

@@ -3,10 +3,11 @@ import type {FormEvent, ReactNode} from 'react';
 import {Dialog} from '../components/Dialog';
 import {Icon} from '../components/Icon';
 import {PATTable} from '../components/PATTable';
+import {ClusterHealth} from '../components/ClusterHealth';
 import {Button, Contact, FormError, Pill, date, errorMessage} from '../components/ui';
 import {formatLabels, parseLabels} from '../lib/labels';
 import {ApiError} from '../lib/api';
-import type {Cluster, DeveloperProfile, PageProps, Session, Settings} from '../types';
+import type {Cluster, DeveloperProfile, PageProps, Session, Settings, HealthMode, HealthProfile} from '../types';
 
 export type AdminView = 'clusters' | 'people' | 'tokens' | 'audit';
 type Controls = Pick<PageProps, 'api' | 'refresh' | 'notify'>;
@@ -139,6 +140,75 @@ function ClusterAction({cluster, operation, api, refresh, notify, onClose}: Cont
   </Dialog>;
 }
 
+function HealthMonitoringSettings({mode, api, refresh, notify, onClose}: Controls & {mode: HealthMode; onClose: () => void}) {
+  const [selection, setSelection] = useState<HealthMode>(mode);
+  const [reason, setReason] = useState('');
+  const action = useAction();
+  const close = () => {if (!action.busy) onClose();};
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const saved = await action.run(async () => {
+      await api('/v1/admin/health', {method: 'PATCH', body: {mode: selection, reason: auditReason(reason, 'health-mode-reason')}});
+      await refresh();
+    });
+    if (saved) {onClose(); notify('Health monitoring policy saved. Existing bookings and access are preserved.');}
+  }
+  return <Dialog open busy={action.busy} onClose={close} title="Health monitoring settings" description="Control background API checks and whether their results gate new bookings." footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="health-mode-form" className="button primary" type="submit" disabled={action.busy || selection === mode}>{action.busy ? 'Saving…' : 'Save monitoring policy'}</button></>}>
+    <form id="health-mode-form" onSubmit={submit}>
+      <FormError message={action.error} fields={action.fields}/>
+      <label className="field" htmlFor="health-mode">Monitoring mode<select id="health-mode" value={selection} onChange={event => setSelection(event.target.value as HealthMode)} disabled={action.busy}><option value="disabled">Disabled · do not schedule checks</option><option value="observe">Observe · report checks without blocking bookings</option><option value="enforce">Enforce · require fresh passing checks for new bookings</option></select></label>
+      <div className={`notice ${selection === 'disabled' ? '' : 'warning'}`}><Icon name="info"/><p>{selection === 'disabled' ? 'Stops scheduling new checks. Requests already running may finish. Stored observations are retained.' : selection === 'observe' ? 'The backend will send read-only requests to registered Kubernetes endpoints using their stored credentials. Results are visible, but do not block placement.' : 'The backend will send read-only requests to registered Kubernetes endpoints. Unknown, recovering, failed or stale checks block new bookings; current holders keep their bookings and access.'}</p></div>
+      <label className="field" htmlFor="health-mode-reason">Audit reason<input id="health-mode-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={1000} required disabled={action.busy} aria-invalid={action.invalid('health-mode-reason')}/></label>
+    </form>
+  </Dialog>;
+}
+
+function ClusterHealthSettings({cluster, mode, api, refresh, notify, onClose}: Controls & {cluster: Cluster; mode: HealthMode; onClose: () => void}) {
+  const original = cluster.health?.profile || cluster.health_profile || 'api-ready.v1';
+  const [profile, setProfile] = useState<HealthProfile>(original);
+  const [baseline, setBaseline] = useState({profile: original, revision: cluster.health?.policy_revision || cluster.health_policy_revision || 1});
+  const [reason, setReason] = useState('');
+  const [conflict, setConflict] = useState(false);
+  const action = useAction();
+  const close = () => {if (!action.busy) onClose();};
+  async function check() {
+    const saved = await action.run(async () => {
+      await api(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}/health-check`, {method: 'POST', body: {reason: auditReason(reason, 'cluster-health-reason')}});
+      await refresh();
+    });
+    if (saved) notify('Health check queued. Refresh the registry to see its completed result.');
+  }
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const saved = await action.run(async () => {
+      try {await api(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}/health-profile`, {method: 'PATCH', body: {profile, expected_revision: baseline.revision, reason: auditReason(reason, 'cluster-health-reason')}});}
+      catch (failure) {if (failure instanceof ApiError && failure.status === 409) setConflict(true); throw failure;}
+      await refresh();
+    });
+    if (saved) {onClose(); notify('Health profile saved. Previous observations are invalidated; existing bookings stay intact.');}
+  }
+  async function reload() {
+    const saved = await action.run(async () => {
+      const latest = await api<import('../types').ClusterHealth>(`/v1/clusters/${encodeURIComponent(cluster.id)}/health`);
+      setProfile(latest.profile); setBaseline({profile: latest.profile, revision: latest.policy_revision}); setConflict(false);
+      await refresh();
+    });
+    if (saved) notify('Current health profile loaded. Review it before saving.');
+  }
+  return <Dialog open busy={action.busy} onClose={close} title="Cluster health" description="Inspect checks from the backend and configure the required API assurance." footer={<><Button onClick={close} disabled={action.busy}>Close</Button><Button onClick={check} disabled={action.busy || mode === 'disabled' || conflict || profile !== baseline.profile}>Request check</Button><button form="cluster-health-form" className="button primary" type="submit" disabled={action.busy || conflict || profile === baseline.profile}>{action.busy ? 'Saving…' : 'Save health profile'}</button></>}>
+    <ClusterLabel cluster={cluster}/><div className="dialog-detail"><ClusterHealth health={cluster.health} detail/></div>
+    {mode === 'disabled' && <div className="notice"><Icon name="info"/><p>Monitoring is disabled. Enable observe or enforce mode in Health monitoring settings before requesting a check.</p></div>}
+    {conflict && <div className="notice warning"><Icon name="info"/><div><p>The health policy changed since this form opened. Your draft is retained. Reload and review the current profile before saving.</p><Button onClick={reload} disabled={action.busy}>Reload health profile</Button></div></div>}
+    <form id="cluster-health-form" onSubmit={save}>
+      <FormError message={action.error} fields={action.fields}/>
+      <label className="field" htmlFor="cluster-health-profile">Check profile<select id="cluster-health-profile" value={profile} onChange={event => setProfile(event.target.value as HealthProfile)} disabled={action.busy || conflict}><option value="api-ready.v1">API discovery and readiness · recommended</option><option value="discovery-only.v1">API discovery only · readiness not checked</option></select></label>
+      {profile === 'discovery-only.v1' && <p className="quiet-note">This lower-assurance profile does not prove API readiness. Use it only when intentionally excluding the readiness check.</p>}
+      <label className="field" htmlFor="cluster-health-reason">Audit reason<input id="cluster-health-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={1000} required disabled={action.busy} aria-invalid={action.invalid('cluster-health-reason')}/></label>
+    </form>
+    {cluster.health?.components?.length ? <ul className="health-components">{cluster.health.components.map((component, index) => <li key={`${component.name}-${index}`}><strong>{component.name}</strong><span>{component.state}{component.http_status ? ` · HTTP ${component.http_status}` : ''} · {component.duration_ms} ms</span>{component.reason_code && <small>{component.reason_code.replaceAll('_', ' ')}</small>}</li>)}</ul> : null}
+  </Dialog>;
+}
+
 interface LabelRow {id: number; key: string; value: string}
 
 function ClusterLabels({cluster, api, refresh, notify, onClose}: Controls & {cluster: Cluster; onClose: () => void}) {
@@ -263,7 +333,9 @@ function Fleet(props: PageProps) {
   const [search, setSearch] = useState('');
   const [placement, setPlacement] = useState('all');
   const [registration, setRegistration] = useState(false);
-  const [selected, setSelected] = useState<{id: string; operation: 'placement' | 'deregister' | 'labels'} | null>(null);
+  const [healthSettings, setHealthSettings] = useState(false);
+  const healthMode = data.settings?.health_mode || data.clusters.find(cluster => cluster.health)?.health?.mode || 'disabled';
+  const [selected, setSelected] = useState<{id: string; operation: 'placement' | 'deregister' | 'labels' | 'health'} | null>(null);
   const registered = data.clusters.map(cluster => ({...cluster, participants: (cluster.participants || []).filter(session => session.state === 'ACTIVE')}));
   const current = selected && registered.find(cluster => cluster.id === selected.id);
   const query = search.trim().toLowerCase();
@@ -271,20 +343,23 @@ function Fleet(props: PageProps) {
   useEffect(() => {if (selected && !data.clusters.some(cluster => cluster.id === selected.id)) setSelected(null);}, [data.clusters, selected]);
   return <>
     <div className="page-heading"><div><div className="eyebrow">ADMINISTRATION</div><h1 id="admin-title">Cluster registry</h1><p>Control which registered environments developers can reserve.</p></div><Button className="button primary" onClick={() => setRegistration(true)}><Icon name="plus"/>Register cluster</Button></div>
-    <div className="admin-summary"><div><strong>{data.clusters.length}</strong><span>registered</span></div><div><strong>{registered.filter(cluster => cluster.participants.length > 0).length}</strong><span>with active holders</span></div><div><strong>{data.clusters.filter(cluster => cluster.maintenance).length}</strong><span>in maintenance</span></div><span className="small muted">Reservation state only · No upstream health check</span></div>
+    <div className="admin-summary"><div><strong>{data.clusters.length}</strong><span>registered</span></div><div><strong>{registered.filter(cluster => cluster.participants.length > 0).length}</strong><span>with active holders</span></div><div><strong>{data.clusters.filter(cluster => cluster.maintenance).length}</strong><span>in maintenance</span></div><span className="small muted">{healthMode === 'disabled' ? 'Health monitoring disabled' : healthMode === 'observe' ? 'Health checks observed · placement unchanged' : 'Fresh passing health required for new bookings'}</span></div>
+    <div className="health-policy-bar"><p>Health checks are independent of reservations and manual maintenance.</p><Button onClick={() => setHealthSettings(true)}>Health monitoring settings…</Button></div>
     <section id="maintenance-list" className="panel flush table-wrap mobile-records" aria-label="Cluster placement controls"><div className="table-toolbar"><Search label="Search registered clusters" placeholder="Search name, ID or label" value={search} onChange={setSearch}/><div className="toolbar-actions"><label className="filter-label"><span className="sr-only">Placement filter</span><select value={placement} onChange={event => setPlacement(event.target.value)}><option value="all">All placement</option><option value="enabled">Placement enabled</option><option value="maintenance">Maintenance</option></select></label><Button id="refresh-admin" onClick={refresh} notify={notify}><Icon name="refresh"/>Refresh registry</Button></div></div>
-      <AdminTable headers={['Cluster', 'Placement', 'Holders', 'Sharing limit', 'Manage']} empty={query || placement !== 'all' ? 'No clusters match these filters.' : 'No clusters registered. Register an approved environment to get started.'} rows={clusters.map(cluster => ({key: cluster.id, cluster: cluster.id, cells: [
+      <AdminTable headers={['Cluster', 'Placement', 'Health', 'Holders', 'Sharing limit', 'Manage']} empty={query || placement !== 'all' ? 'No clusters match these filters.' : 'No clusters registered. Register an approved environment to get started.'} rows={clusters.map(cluster => ({key: cluster.id, cluster: cluster.id, cells: [
         <ClusterLabel cluster={cluster}/>,
-        <div><Pill tone={cluster.maintenance ? 'warning' : cluster.participants.length ? cluster.shareable ? 'brand' : 'neutral' : 'success'}>{cluster.maintenance ? 'Maintenance' : cluster.participants.length ? cluster.shareable ? 'Sharing enabled' : 'Reserved' : 'Free'}</Pill><small>{cluster.reason}</small></div>,
+        <div><Pill tone={cluster.maintenance ? 'warning' : cluster.participants.length ? cluster.shareable ? 'brand' : 'neutral' : 'success'}>{cluster.maintenance ? 'Maintenance' : cluster.participants.length ? cluster.shareable ? 'Sharing enabled' : 'Reserved' : cluster.available ? 'Free' : 'Placement blocked'}</Pill><small>{cluster.reason}</small></div>,
+        <ClusterHealth health={cluster.health}/>,
         cluster.participants.length ? cluster.participants.map(holder => <Contact key={holder.id} person={holder}/>) : <span className="muted">No active holders</span>,
         <div><strong>{cluster.max_participants} developers</strong><small>{cluster.shareable ? `${cluster.participants.length} currently held` : 'Sharing is currently off'}</small></div>,
-        <div><div className="row-actions"><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'labels'})}>Edit labels…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'placement'})}>{cluster.maintenance ? 'Enable placement…' : 'Maintenance…'}</Button><Button className="button danger-text" disabled={cluster.participants.length > 0} aria-describedby={cluster.participants.length ? `deregister-blocked-${cluster.id}` : undefined} onClick={() => setSelected({id: cluster.id, operation: 'deregister'})}>Deregister…</Button></div>{cluster.participants.length > 0 && <small id={`deregister-blocked-${cluster.id}`}>Release active bookings first.</small>}</div>,
+        <div><div className="row-actions"><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'health'})}>Health…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'labels'})}>Edit labels…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'placement'})}>{cluster.maintenance ? 'Enable placement…' : 'Maintenance…'}</Button><Button className="button danger-text" disabled={cluster.participants.length > 0} aria-describedby={cluster.participants.length ? `deregister-blocked-${cluster.id}` : undefined} onClick={() => setSelected({id: cluster.id, operation: 'deregister'})}>Deregister…</Button></div>{cluster.participants.length > 0 && <small id={`deregister-blocked-${cluster.id}`}>Release active bookings first.</small>}</div>,
       ]}))}/>
       <div className="table-footer"><span>{clusters.length} of {data.clusters.length} live registrations</span><span>Retired entries remain in booking and audit history</span></div>
     </section>
     <div className="two-columns compact-panels"><section className="panel"><h3>Maintenance pauses new bookings</h3><p>Current holders keep their reservations. An audit reason is required for placement changes.</p></section><section className="panel"><h3>Deregistration removes stored access</h3><p>Release active bookings first. Removing a registration leaves Kubernetes workloads and booking history intact.</p></section></div>
     {registration && <Registration api={api} refresh={refresh} notify={notify} onClose={() => setRegistration(false)}/>}
-    {selected && current && (selected.operation === 'labels' ? <ClusterLabels key={`${selected.id}-labels`} cluster={current} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : <ClusterAction key={`${selected.id}-${selected.operation}`} cluster={current} operation={selected.operation} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/>)}
+    {healthSettings && <HealthMonitoringSettings mode={healthMode} api={api} refresh={refresh} notify={notify} onClose={() => setHealthSettings(false)}/>}
+    {selected && current && (selected.operation === 'health' ? <ClusterHealthSettings key={`${selected.id}-health`} cluster={current} mode={healthMode} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : selected.operation === 'labels' ? <ClusterLabels key={`${selected.id}-labels`} cluster={current} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : <ClusterAction key={`${selected.id}-${selected.operation}`} cluster={current} operation={selected.operation} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/>)}
   </>;
 }
 

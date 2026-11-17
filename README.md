@@ -237,6 +237,29 @@ devctl admin deregister CLUSTER_ID --reason 'Retiring environment'
 
 Deregistration removes the stored kubeconfig and hides the cluster from booking/availability lists. Historical bookings, idempotency keys and audit events retain archived public metadata. Repeating the command is safe. Retired IDs cannot be reused; register again with a new ID (the display name may be reused). No Kubernetes request is made, workloads remain, and PATs keep their independent validity. Database backups may still contain previous encrypted credentials until their retention period ends. [ADR007](docs/adr-007.md) records this choice.
 
+## Cluster health monitoring
+
+Health monitoring is opt-in and starts **disabled**, including after upgrading an existing database. As an administrator, open **Cluster registry → Health monitoring settings…** and choose **Observe** to run checks without changing booking behavior. Review the results, then choose **Enforce** to require fresh passing checks for new bookings. Changes require an audit reason. Enabling Observe or Enforce sends fixed read-only requests from the backend to every live registered Kubernetes endpoint; choose a mode only for clusters approved for monitoring.
+
+Each row has a separate **Health** indicator and a **Health…** action for details, requesting a check and selecting a fixed profile. The default `api-ready.v1` checks verified TLS, version, discovery and `/readyz`. An explicit `discovery-only.v1` exception omits readiness and displays that lower assurance. A readiness permission error does not silently select the weaker profile. Health checks create no Kubernetes resources or RBAC bindings, and never use a developer PAT or extend booking activity.
+
+```bash
+devctl admin health
+devctl admin health --mode observe --reason 'Observe approved development clusters'
+devctl clusters
+devctl admin cluster status CLUSTER_ID --json
+devctl admin cluster check CLUSTER_ID --reason 'Investigate API connectivity' --wait --timeout 2m
+devctl admin health --mode enforce --reason 'Require fresh passing API checks'
+# Explicitly choose lower assurance only after reviewing endpoint permissions:
+devctl admin cluster profile CLUSTER_ID --profile discovery-only.v1 --reason 'Readiness access is unavailable for this approved identity'
+# Stop new probes without releasing bookings:
+devctl admin health --mode disabled --reason 'Pause monitoring'
+```
+
+Checks normally run every 30 seconds with jitter, have a 10-second total budget and become stale after 90 seconds. A failed required check blocks new bookings immediately in Enforce mode; two consecutive passing cycles establish or restore eligibility. This applies to manual/shared booking and PAT fallback, which skips failing candidates and continues to a healthy compatible cluster. It never switches an existing primary, evicts a holder, clears maintenance or revokes access. An accepted check request is not a passing result; `--wait` waits for one completed cycle, which can still be `RECOVERING`. Failed checks return exit code 4 with their safe status.
+
+The worker uses PostgreSQL leases and configuration/profile versions, survives restarts, and discards stale results. Disabling stops new check claims; a cycle already in flight may finish within its bounded deadline, and its result is rejected. A normal restart preserves fresh observations. Health describes the configured API checks from the backend network path; it does not verify authenticated identity, workload permissions, capacity, CNI or application readiness. All backend replicas must share equivalent egress/trust. See the [health architecture](docs/cluster-health-architecture.md), [security notes](docs/security.md) and [OpenAPI](docs/openapi.json).
+
 ## Packaging and tests
 
 ```bash
@@ -290,7 +313,7 @@ Developers need network access to the gateway and IdP; the backend must reach th
 
 ### Troubleshooting kubectl discovery errors
 
-Messages from `memcache.go` about the server API group list mean discovery failed before kubectl could list workloads. The gateway's `/readyz` only checks the devctl service; a cluster shown as available has reservation capacity but may have an unreachable Kubernetes endpoint. First check the current primary in the browser or `devctl sessions`, then make bounded requests with the same kubeconfig:
+Messages from `memcache.go` about the server API group list mean discovery failed before kubectl could list workloads. The gateway's `/readyz` only checks the devctl service. When cluster health enforcement is disabled, availability does not verify connectivity; even a fresh passing check cannot guarantee a later request. Check the cluster's Health indicator and the current primary in the browser or `devctl sessions`, then make bounded requests with the same kubeconfig:
 
 ```bash
 kubectl --request-timeout=10s get --raw=/version

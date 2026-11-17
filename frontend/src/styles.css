@@ -3138,3 +3138,14 @@ td > .small, td > .muted, td > strong + span { display: block; font-size: 12px; 
 #cluster-labels-form .notice { margin: 0; }
 #cluster-labels-form > .quiet-note { margin-top: 16px; }
 #cluster-labels-dialog > .drawer-content > .dialog-detail { margin-bottom: 20px; }
+
+/* Health remains independent from reservation and maintenance labels. */
+.cluster-health {display:flex;flex-direction:column;align-items:flex-start;gap:6px;max-width:290px}
+.cluster-health small {display:block;line-height:1.5;overflow-wrap:anywhere}
+.cluster-health .health-reason {color:var(--muted)}
+.health-policy-bar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 0}
+.health-policy-bar p {margin:0;color:var(--muted);font-size:14px}
+.health-components {padding:0;list-style:none;display:grid;gap:10px}
+.health-components li {display:grid;gap:4px;border-top:1px solid var(--border);padding-top:10px}
+.health-components span,.health-components small {font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+@media(max-width:640px) {.health-policy-bar {align-items:stretch;flex-direction:column}.cluster-health {max-width:none}}

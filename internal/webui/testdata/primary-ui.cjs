@@ -14,7 +14,7 @@ const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'a
 const state = {
   primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, patSerial: 0, pats: [], mutations: [], requests: [], unauthorized: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
   registry: new Map(['a', 'b', 'c'].map(id => [id, {id, name: `Cluster ${id.toUpperCase()}`, labels: {test: 'ui'}, max_participants: 2}])),
-  labelFailure: false, labelConflict: null,
+  labelFailure: false, labelConflict: null, healthMode: 'disabled', healthRecords: new Map(), healthProfileConflict: false, healthCheckFailure: false,
   sharing: new Map(), bookingKeys: [], bookingFailure: false, sessionFailure: false, audit: [{id: 1, at: new Date(fixtureStartedAt - 1000).toISOString(), actor: 'admin', action: 'settings.updated', object_id: 'team-policy', detail: 'Fixture policy reason'}, {id: 2, at: new Date(fixtureStartedAt - 3600000).toISOString(), actor: 'alice', action: 'session.created', object_id: 's-a', detail: '<img src=x onerror=alert(1)>'}], maintenance: new Map(), registrationFailure: false, maintenanceFailure: false, releaseFailure: false, heldRequest: null, kubernetesRequests: 0, profileReads: 0,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: new Date(fixtureStartedAt - 1800000).toISOString(), expires_at: new Date(fixtureStartedAt + 4 * 3600000).toISOString(), reason: 'fixture'})),
 };
@@ -22,7 +22,13 @@ let origin;
 const sessionRows = () => state.sessions.map(s => ({...s, primary: s.id === state.primary}));
 const primary = () => sessionRows().find(s => s.id === state.primary && s.state === 'ACTIVE');
 const profile = admin => ({owner_id: admin ? 'admin' : 'alice', user: admin ? administrator : alice, max_bookings: admin ? state.defaultLimit : state.override ?? state.defaultLimit, max_bookings_override: admin ? null : state.override, active_bookings: admin ? 0 : state.sessions.filter(s => s.state === 'ACTIVE' && s.owner === 'alice').length, primary_session: admin ? null : primary(), selection_version: state.version});
-const clusters = () => Array.from(state.registry.values()).filter(c => !state.retired.has(c.id)).map(c => ({...c, maintenance: state.maintenance.get(c.id) || false, controller_session: state.sessions.find(s => s.cluster === c.id && s.state === 'ACTIVE')?.id, shareable: state.sharing.get(c.id) || false, participants: sessionRows().filter(s => s.cluster === c.id && s.state === 'ACTIVE'), available: !state.maintenance.get(c.id) && (!state.sessions.some(s => s.cluster === c.id && s.state === 'ACTIVE') || state.sharing.get(c.id) && state.sessions.filter(s => s.cluster === c.id && s.state === 'ACTIVE').length < c.max_participants), reason: state.maintenance.get(c.id) ? 'Fixture maintenance: new bookings disabled' : 'Fixture cluster'}));
+const healthFor = id => ({state: 'UNKNOWN', profile: 'api-ready.v1', reason_code: 'not_checked', duration_ms: 0, max_age_seconds: 90, consecutive_successes: 0, readiness_confirmed: false, discovery_coverage: 'not_completed', identity_verification: 'NOT_CHECKED', check_pending: false, configuration_generation: 1, policy_revision: 1, ...state.healthRecords.get(id), mode:state.healthMode});
+const clusters = () => Array.from(state.registry.values()).filter(c => !state.retired.has(c.id)).map(c => {
+ const health=healthFor(c.id), participants=sessionRows().filter(s=>s.cluster===c.id&&s.state==='ACTIVE');
+ const capacity=!state.maintenance.get(c.id)&&(!participants.length||state.sharing.get(c.id)&&participants.length<c.max_participants);
+ const healthAllowed=state.healthMode!=='enforce'||health.state==='PASSING';
+ return {...c,health,maintenance:state.maintenance.get(c.id)||false,controller_session:participants[0]?.id,shareable:state.sharing.get(c.id)||false,participants,available:capacity&&healthAllowed,reason:state.maintenance.get(c.id)?'Fixture maintenance: new bookings disabled':!healthAllowed?'New bookings blocked: health checks must pass':'Fixture cluster'};
+});
 function holdRequest(method, pathname) {
   assert.equal(state.heldRequest, null, 'only one fixture response may be held at a time');
   let arrive, release, timeout;
@@ -68,7 +74,7 @@ const server = http.createServer(async (req, res) => {
       const routes = {
         '/web/session': {user: admin ? administrator : alice, owner_id: admin ? 'admin' : 'alice', csrf_token: admin ? 'csrf-admin' : 'csrf-alice', expires_at: '2099-01-01T00:00:00Z'},
         '/v1/profile': profile(admin), '/v1/clusters': clusters(), '/v1/sessions': sessionRows(), '/v1/pats': state.pats.filter(p => url.searchParams.get('all') === 'true' && admin || p.owner === (admin ? 'admin' : 'alice')),
-        '/v1/admin/settings': {default_max_bookings: state.defaultLimit, inactivity_grace_period: state.inactivityGrace}, '/v1/admin/developers': [profile(false), profile(true)], '/v1/admin/audit': state.audit,
+        '/v1/admin/health': {mode: state.healthMode}, '/v1/admin/settings': {default_max_bookings: state.defaultLimit, inactivity_grace_period: state.inactivityGrace, health_mode: state.healthMode}, '/v1/admin/developers': [profile(false), profile(true)], '/v1/admin/audit': state.audit,
       };
       if (url.pathname.startsWith('/v1/admin/') && !admin) { reply(res, 403, {error: 'administrator required'}); return; }
       // Capture the response before waiting so this can model an old in-flight
@@ -76,6 +82,7 @@ const server = http.createServer(async (req, res) => {
       if (state.heldRequest?.method === req.method && state.heldRequest.pathname === url.pathname) {
         const held = state.heldRequest; state.heldRequest = null; held.arrive(); await held.wait;
       }
+      if (/^\/v1\/clusters\/[^/]+\/health$/.test(url.pathname)) {reply(res,200,healthFor(url.pathname.split('/')[3]));return;}
       if (Object.hasOwn(routes, url.pathname)) { reply(res, 200, routes[url.pathname]); return; }
       reply(res, 404, {error: 'fixture route not found'}); return;
     }
@@ -88,6 +95,20 @@ const server = http.createServer(async (req, res) => {
       const held = state.heldRequest; state.heldRequest = null; held.arrive(); await held.wait;
     }
     if (url.pathname.startsWith('/v1/admin/') && !admin) { reply(res, 403, {error: 'administrator required'}); return; }
+    if (url.pathname === '/v1/admin/health' && req.method === 'PATCH') {
+      assert.ok(['disabled','observe','enforce'].includes(body.mode));assert.ok(body.reason?.trim());state.healthMode=body.mode;reply(res,200,{mode:state.healthMode});return;
+    }
+    if (/^\/v1\/admin\/clusters\/[^/]+\/health-check$/.test(url.pathname) && req.method === 'POST') {
+      const id=url.pathname.split('/')[4];assert.ok(body.reason?.trim());
+      if(state.healthMode==='disabled'){reply(res,409,{error:'Enable health monitoring first'});return;}
+      if(state.healthCheckFailure){state.healthCheckFailure=false;reply(res,503,{error:'Fixture health queue unavailable'});return;}
+      state.healthRecords.set(id,{...healthFor(id),check_pending:true});reply(res,202,{id:'hc-ui-fixture',pending:true,health:healthFor(id)});return;
+    }
+    if (/^\/v1\/admin\/clusters\/[^/]+\/health-profile$/.test(url.pathname) && req.method === 'PATCH') {
+      const id=url.pathname.split('/')[4];assert.ok(body.reason?.trim());const previous=healthFor(id);
+      if(state.healthProfileConflict){state.healthProfileConflict=false;state.healthRecords.set(id,{...previous,policy_revision:previous.policy_revision+1});reply(res,409,{error:'Fixture health profile changed; reload and review'});return;}
+      assert.equal(body.expected_revision,previous.policy_revision);assert.ok(['api-ready.v1','discovery-only.v1'].includes(body.profile));state.healthRecords.set(id,{...previous,profile:body.profile,policy_revision:previous.policy_revision+1,state:'UNKNOWN',reason_code:'configuration_changed',checked_at:undefined,check_pending:false});reply(res,200,healthFor(id));return;
+    }
     if (url.pathname === '/auth/logout' && req.method === 'POST') {
       for (const session of state.sessions) if (session.owner === 'alice' && session.state === 'ACTIVE') session.state = 'RELEASED';
       state.primary = null; state.version++; state.signedOut = true;
@@ -208,7 +229,7 @@ const server = http.createServer(async (req, res) => {
   const nav = (page, section) => page.locator(`[data-section="${section}"]`).filter({visible: true}).first().click();
   const dialog = (page, title) => page.getByRole('dialog', {name: title, exact: typeof title === 'string'});
   const closeDialog = async (page, target) => {
-    await target.getByRole('button', {name: /^Cancel$|^Keep current$|^Keep booking$|^Keep token$/}).click();
+    await target.getByRole('button', {name: /^Cancel$|^Close$|^Keep current$|^Keep booking$|^Keep token$/}).click();
     await target.waitFor({state: 'hidden'});
   };
   const expectNoOverflow = async (page, label) => {
@@ -608,12 +629,32 @@ const server = http.createServer(async (req, res) => {
     const refreshedClusters=await (await refreshedCatalogue).json();
     assert.deepEqual(refreshedClusters.find(value=>value.id==='c').labels,{marker:'',region:'eu'},'developer refresh receives the authoritative edited labels');
     await page.waitForFunction(()=>{const button=document.querySelector('#refresh-pats');return button&&!button.disabled&&button.getAttribute('aria-busy')!=='true';});
-    await nav(page,'clusters');await page.getByRole('searchbox',{name:'Search clusters',exact:true}).fill('');
+    await nav(page,'clusters');await page.getByRole('searchbox',{name:'Search clusters',exact:true}).fill('');await page.clock.runFor(10);assert.equal(await page.getByRole('searchbox',{name:'Search clusters',exact:true}).inputValue(),'');
     try {
       await page.locator('#cluster-list [data-cluster-id="c"]').getByText('marker=',{exact:true}).waitFor({timeout:5000});
       await page.locator('#cluster-list [data-cluster-id="c"]').getByText('region=eu',{exact:true}).waitFor({timeout:5000});
     }catch(failure){console.error('Catalogue fixture state:',await page.locator('#section-clusters').innerText());console.error('Catalogue inputs:',await page.locator('#section-clusters input,#section-clusters select').evaluateAll(inputs=>inputs.map(input=>({label:input.getAttribute('aria-label'),value:input.value}))));console.error('Saved registry labels:',state.registry.get('c').labels);throw failure;}
     await nav(page,'access');
+
+    // Health administration is explicitly opt-in and independent of live holds.
+    const healthBookingSnapshot=state.sessions.map(({id,state,cluster})=>({id,state,cluster})), healthPATSnapshot=structuredClone(state.pats), healthPrimary=state.primary;
+    await adminRow('c').getByRole('button',{name:'Health…',exact:true}).click();let healthDialog=dialog(adminPage,'Cluster health');
+    await healthDialog.getByText('Monitoring off',{exact:true}).waitFor();assert.equal(await healthDialog.getByRole('button',{name:'Request check',exact:true}).isDisabled(),true);await closeDialog(adminPage,healthDialog);
+    await adminPage.getByRole('button',{name:'Health monitoring settings…',exact:true}).click();let healthPolicy=dialog(adminPage,'Health monitoring settings');
+    await healthPolicy.locator('#health-mode').selectOption('observe');await healthPolicy.locator('#health-mode-reason').fill('   ');await healthPolicy.getByRole('button',{name:'Save monitoring policy',exact:true}).click();await healthPolicy.getByRole('alert').waitFor();assert.equal(state.healthMode,'disabled');
+    await healthPolicy.locator('#health-mode-reason').fill('Approved read-only health checks');await healthPolicy.getByRole('button',{name:'Save monitoring policy',exact:true}).click();await healthPolicy.waitFor({state:'hidden'});assert.equal(state.healthMode,'observe');
+    await adminRow('c').getByRole('button',{name:'Health…',exact:true}).click();healthDialog=dialog(adminPage,'Cluster health');
+    await healthDialog.locator('#cluster-health-reason').fill('Inspect the API');state.healthCheckFailure=true;await healthDialog.getByRole('button',{name:'Request check',exact:true}).click();await healthDialog.getByRole('alert').filter({hasText:'Fixture health queue unavailable'}).waitFor();assert.equal(await healthDialog.locator('#cluster-health-reason').inputValue(),'Inspect the API');
+    await healthDialog.getByRole('button',{name:'Request check',exact:true}).click();await healthDialog.getByText('Check queued or running',{exact:true}).waitFor();assert.equal(healthFor('c').check_pending,true);
+    await healthDialog.locator('#cluster-health-profile').selectOption('discovery-only.v1');await healthDialog.getByText(/lower-assurance profile/).waitFor();state.healthProfileConflict=true;await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).click();await healthDialog.getByRole('alert').waitFor();assert.equal(await healthDialog.locator('#cluster-health-profile').inputValue(),'discovery-only.v1');assert.equal(await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).isDisabled(),true);
+    await healthDialog.getByRole('button',{name:'Reload health profile',exact:true}).click();await healthDialog.locator('#cluster-health-profile').selectOption('discovery-only.v1');await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).click();await healthDialog.waitFor({state:'hidden'});assert.equal(healthFor('c').profile,'discovery-only.v1');assert.equal(healthFor('c').state,'UNKNOWN');
+    await adminPage.getByRole('button',{name:'Health monitoring settings…',exact:true}).click();healthPolicy=dialog(adminPage,'Health monitoring settings');await healthPolicy.locator('#health-mode').selectOption('enforce');await healthPolicy.locator('#health-mode-reason').fill('Require verified API checks for new bookings');await healthPolicy.getByRole('button',{name:'Save monitoring policy',exact:true}).click();await healthPolicy.waitFor({state:'hidden'});
+    state.registry.set('health-free',{id:'health-free',name:'Health fixture',labels:{test:'ui'},max_participants:2});state.healthRecords.set('health-free',{state:'FAILING',reason_code:'connect_timeout',checked_at:new Date().toISOString()});state.healthRecords.set('c',{...healthFor('c'),state:'FAILING',reason_code:'tls_untrusted',checked_at:new Date().toISOString()});
+    await nav(page,'clusters');await page.getByRole('searchbox',{name:'Search clusters',exact:true}).fill('');await page.clock.runFor(10);await page.getByRole('button',{name:'Refresh',exact:true}).click();const unhealthyRow=page.locator('[data-cluster-id="health-free"]');await unhealthyRow.getByText('Check failed',{exact:true}).waitFor();assert.equal(await unhealthyRow.getByRole('button',{name:'Book cluster',exact:true}).count(),0);assert.match(await unhealthyRow.innerText(),/Unavailable/);
+    const heldHealthRow=page.locator('[data-cluster-id="c"]');assert.equal(await heldHealthRow.getByRole('button',{name:'View booking',exact:true}).isEnabled(),true);assert.deepEqual(state.sessions.map(({id,state,cluster})=>({id,state,cluster})),healthBookingSnapshot);assert.deepEqual(state.pats,healthPATSnapshot);assert.equal(state.primary,healthPrimary);
+    state.healthRecords.set('health-free',{...healthFor('health-free'),state:'PASSING',reason_code:'passing',checked_at:new Date().toISOString(),consecutive_successes:2,readiness_confirmed:true});await page.getByRole('button',{name:'Refresh',exact:true}).click();await unhealthyRow.getByRole('button',{name:'Book cluster',exact:true}).waitFor();
+    await adminPage.setViewportSize({width:390,height:844});await adminPage.getByRole('button',{name:'Refresh registry',exact:true}).click();await adminPage.locator('[data-cluster-id="health-free"]').getByRole('button',{name:'Health…',exact:true}).click();healthDialog=dialog(adminPage,'Cluster health');await expectNoOverflow(adminPage,'Mobile health configuration');await closeDialog(adminPage,healthDialog);await adminPage.setViewportSize({width:1440,height:1040});
+    state.registry.delete('health-free');state.healthRecords.clear();state.healthMode='disabled';await nav(page,'access');
 
     await nav(adminPage,'admin-people'); const activeBooking=primary(); assert.ok(activeBooking); const beforeReleasePATs=structuredClone(state.pats);
     const releases=()=>state.mutations.filter(value=>value.method==='POST'&&/^\/v1\/admin\/sessions\/[^/]+\/release$/.test(value.path));
@@ -695,6 +736,6 @@ const server = http.createServer(async (req, res) => {
     assert.equal(state.sessions.filter(value=>value.state==='ACTIVE'&&value.owner==='alice').length,0); assert.equal(state.sessions.find(value=>value.id==='s-bob-shared').state,'ACTIVE','logout must preserve another developer’s booking'); await expectStorageEmpty(page);
     assert.deepEqual(nativeDialogs,[],'product flows must use accessible in-page dialogs'); assert.deepEqual(errors,[]); assert.deepEqual(cspErrors,[]); assert.equal(state.kubernetesRequests,0); assert.deepEqual(externalRequests,[]);
     await context.close();
-    console.log('Slate UI contracts passed: audited registry labels with row validation/empty values/32-label bound/atomic clear, retained drafts and explicit stale-label reload, mobile label editing and unchanged bookings/PATs, strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
+    console.log('Slate UI contracts passed: explicitly enabled health monitoring, independent check summaries, audited modes and profiles, queue retry, stale-profile draft reload, enforced booking gates with existing holders/PATs/primary preserved, passing recovery and mobile health controls; audited registry labels with row validation/empty values/32-label bound/atomic clear, retained drafts and explicit stale-label reload, mobile label editing and unchanged bookings/PATs, strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error=>{console.error(error.stack);server.close();process.exitCode=1;});

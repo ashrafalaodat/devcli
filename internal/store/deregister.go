@@ -17,12 +17,15 @@ func populateCluster(c *model.Cluster, sessions []model.Session) {
 			c.Participants = append(c.Participants, session)
 		}
 	}
-	c.Available = c.DeregisteredAt == nil && !c.Maintenance && (len(c.Participants) == 0 || c.Shareable && len(c.Participants) < c.MaxParticipants)
+	healthAllows := c.Health == nil || c.Health.Eligible(c.Health.EvaluatedAt)
+	c.Available = c.DeregisteredAt == nil && !c.Maintenance && healthAllows && (len(c.Participants) == 0 || c.Shareable && len(c.Participants) < c.MaxParticipants)
 	switch {
 	case c.DeregisteredAt != nil:
 		c.Reason = "deregistered; stored Kubernetes credentials removed; booking history retained"
 	case c.Maintenance:
 		c.Reason = "maintenance: new bookings disabled"
+	case !healthAllows:
+		c.Reason = "new bookings blocked: cluster health is " + c.Health.State + " (" + c.Health.ReasonCode + ")"
 	case len(c.Participants) == 0:
 		c.Reason = "available for exclusive booking"
 	case c.Shareable && c.Available:
@@ -55,6 +58,16 @@ func (s *Store) Cluster(ctx context.Context, id string) (model.Cluster, error) {
 		sessions, err := t.sessions(ctx)
 		if err != nil {
 			return err
+		}
+		if c.DeregisteredAt == nil {
+			h, e := readHealth(ctx, t, c.ID)
+			if e != nil {
+				return e
+			}
+			c.Health = &h
+			c.ConfigurationGeneration = h.ConfigurationGeneration
+			c.HealthProfile = h.Profile
+			c.HealthPolicyRevision = h.PolicyRevision
 		}
 		populateCluster(&c, sessions)
 		return nil

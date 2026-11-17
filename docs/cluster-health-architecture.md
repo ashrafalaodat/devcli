@@ -1,6 +1,8 @@
 # Cluster health checks: architecture and implementation plan
 
-Status: proposed, documentation only. Based on repository commit `bd7136c`, reviewed on 2026-11-17. The worker, database fields, API additions and commands below do not exist yet. Examples use fictional identifiers. This document neither authorizes changes to registered clusters nor claims that the checks have been implemented or tested.
+Status: core health monitoring implemented on 2026-11-17 from this design, originally based on repository commit `bd7136c`. See the implementation boundary below and the [verification record](verification.md) for executed checks. Examples use fictional identifiers. This document does not authorize changes to registered clusters or corporate identity systems.
+
+The first release includes migration 9, durable Disabled/Observe/Enforce modes (default Disabled), fixed GET-only probes, leased workers, generation-fenced publication, fresh-health placement gates, GUI/CLI controls and automated TLS/PostgreSQL/browser integration tests. API paths and CLI commands described below are implemented. Timing defaults are constants rather than administrator-editable settings, and concurrency is capped at four per backend instance with one database lease per cluster. Workflow verification barriers, machine credential replacement, identity reviews, heterogeneous egress domains, metrics exporters and configurable history retention remain future integrations. The later design sections retain their proposed requirements for that future work; they are not a claim those integrations exist.
 
 ## 1. Recommended approach
 
@@ -16,7 +18,7 @@ All must permit placement. A successful probe cannot clear maintenance or a work
 
 Use the current Go, PostgreSQL and client-go stack. No agent in each cluster, additional service, Redis, Prometheus installation or Kubernetes resource creation is needed for the initial version.
 
-## 2. What exists today
+## 2. Original baseline and integration points
 
 | Code | Current behavior | Required change |
 | --- | --- | --- |
@@ -82,7 +84,7 @@ Proposed defaults, to validate with disposable fixtures before enabling enforcem
 | Per-request deadline | 3 seconds, including body consumption |
 | Entire cycle deadline | 10 seconds; remaining requests inherit the remaining budget |
 | Probe lease | 20 seconds; publishing must finish before its lease expires |
-| Worker concurrency | At most four clusters; one leased cycle per cluster |
+| Worker concurrency | At most four clusters per backend instance; one leased cycle per cluster across instances |
 | Failure policy | First failed required check blocks new placement immediately |
 | Recovery policy | Two consecutive passing cycles, including initial observation/registration |
 | Body limits | 64 KiB version, 4 KiB readiness, 4 MiB per discovery response, capped after decompression |
@@ -198,7 +200,7 @@ Extend the protected cluster summary with safe fields such as:
 }
 ```
 
-Suggested additional APIs:
+Implemented health APIs:
 
 - `GET /v1/clusters/{id}/health`: authenticated team-visible safe status; no network request or reservation side effects.
 - `POST /v1/admin/clusters/{id}/health-check`: authenticated administrator queues/coalesces a fixed check, returning 202 and a pollable request identifier. Enforce browser Origin/CSRF, rate limits and an audit reason. Do not hold the response open for upstream HTTP.
@@ -243,4 +245,4 @@ Required tests before claiming the feature works:
 
 Use local TLS protocol fixtures plus disposable PostgreSQL schemas for failure and race coverage. Real Kubernetes checks need separately approved disposable targets; existing remote registrations must not become integration-test infrastructure implicitly. Neither architecture document constitutes permission to probe or mutate corporate systems.
 
-At present, only the existing code paths and external endpoint semantics were reviewed for this design. No application code, schema, workers, cluster state or identity settings were changed, and no application test suite was run for this documentation-only task. Implementation, operational tuning, real-cluster integration and production rollout remain future work.
+The implementation follows this plan for core monitoring and opt-in placement enforcement. Automated tests use local TLS fixtures, isolated PostgreSQL schemas, the actual backend/worker, native Kubernetes clients and local Keycloak; they do not establish real-cluster workload compatibility or production-network behavior. Monitoring remains disabled on upgrade until an administrator enables it for approved targets. Real-cluster integration, operational tuning, production rollout and the future integrations identified above require separate validation; current results are recorded in [verification](verification.md).

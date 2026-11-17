@@ -2523,7 +2523,7 @@
     },
     "/v1/admin/settings": {
       "get": {
-        "summary": "Administrator view of reservation count and inactivity policy",
+        "summary": "Administrator reservation policy and current health-monitoring rollout mode",
         "responses": {
           "200": {
             "description": "Success",
@@ -2979,7 +2979,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3116,7 +3116,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3290,7 +3290,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3464,7 +3464,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3638,7 +3638,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3812,7 +3812,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3949,7 +3949,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4098,7 +4098,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4245,7 +4245,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4429,7 +4429,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4613,7 +4613,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4797,7 +4797,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4981,7 +4981,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -5128,7 +5128,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -5340,6 +5340,536 @@
           }
         ]
       }
+    },
+    "/v1/clusters/{id}/health": {
+      "get": {
+        "summary": "View a safe cluster-health observation",
+        "description": "Approved developers may view team cluster health. This endpoint neither contacts Kubernetes nor updates booking activity. PATs cannot authenticate it.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterHealth"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Live registered cluster ID; retired registrations return 404."
+          }
+        ]
+      }
+    },
+    "/v1/admin/health": {
+      "get": {
+        "summary": "View durable health-monitoring mode",
+        "description": "Administrator-only. No upstream requests.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthModeSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Change health-monitoring rollout mode",
+        "description": "Administrator-only audited change. Observe/enforce enables fixed read-only checks of live registrations. Disabled invalidates outstanding claim publication and stops new claims; an already-running bounded read-only cycle may finish but cannot publish. Does not release reservations, change primary or revoke PATs.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthModeSettings"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "mode",
+                  "reason"
+                ],
+                "properties": {
+                  "mode": {
+                    "$ref": "#/components/schemas/HealthMode"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason; backend bounds UTF-8 size to 1000 bytes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/clusters/{id}/health-check": {
+      "post": {
+        "summary": "Queue or coalesce a fixed cluster-health check",
+        "description": "Administrator-only. Requires enabled monitoring; disabled returns 409. Coalesces concurrent requests and a ten-second refresh window. No arbitrary URL/path or synchronous upstream call. Inspect health after the completed cycle; RECOVERING is a completed cycle but not yet eligible under enforce mode.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous checking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckRequest"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason; backend bounds UTF-8 size to 1000 bytes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Live registered cluster ID; retired registrations return 404."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
+    },
+    "/v1/admin/clusters/{id}/health-profile": {
+      "patch": {
+        "summary": "Replace a fixed health profile with revision checking",
+        "description": "Administrator-only. A stale revision returns 409. An actual change invalidates old observations and claims, increases the policy revision and schedules a new check when monitoring is enabled. Never changes Kubernetes permissions or clears manual maintenance.",
+        "responses": {
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired API token / unapproved identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner, administrator or browser CSRF permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown developer, cluster or reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "State/provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterHealth"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "profile",
+                  "expected_revision",
+                  "reason"
+                ],
+                "properties": {
+                  "profile": {
+                    "$ref": "#/components/schemas/HealthProfile"
+                  },
+                  "expected_revision": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason; backend bounds UTF-8 size to 1000 bytes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Live registered cluster ID; retired registrations return 404."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -5486,7 +6016,8 @@
             "type": "boolean"
           },
           "available": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "New booking availability combines registration, maintenance, sharing/reservations and, only in enforce mode, fresh passing health. Observe and disabled modes do not add a health placement gate."
           },
           "max_participants": {
             "type": "integer",
@@ -5504,6 +6035,22 @@
             "format": "date-time",
             "nullable": true,
             "description": "Present on archived metadata returned for historical session details. Deregistered clusters never appear in current registry/availability lists, have no stored kubeconfig and cannot be selected or booked."
+          },
+          "health": {
+            "$ref": "#/components/schemas/ClusterHealth"
+          },
+          "configuration_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "health_profile": {
+            "$ref": "#/components/schemas/HealthProfile"
+          },
+          "health_policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
           }
         },
         "required": [
@@ -5796,7 +6343,8 @@
         "type": "object",
         "required": [
           "default_max_bookings",
-          "inactivity_grace_period"
+          "inactivity_grace_period",
+          "health_mode"
         ],
         "properties": {
           "default_max_bookings": {
@@ -5809,6 +6357,9 @@
             "type": "string",
             "default": "4h0m0s",
             "description": "Go duration in whole seconds, 1m through 168h. Applied to each booking independently from its last activity or initial baseline."
+          },
+          "health_mode": {
+            "$ref": "#/components/schemas/HealthMode"
           }
         }
       },
@@ -5928,6 +6479,194 @@
             "type": "string",
             "maxLength": 1000,
             "description": "Audit reason; required when an administrator edits another developer’s credential. Owner edits use a default reason if omitted."
+          }
+        }
+      },
+      "HealthMode": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "observe",
+          "enforce"
+        ],
+        "default": "disabled",
+        "description": "Durable global rollout policy. Disabled sends no health probes. Observe probes without health placement gating. Enforce requires fresh passing checks for new bookings."
+      },
+      "HealthProfile": {
+        "type": "string",
+        "enum": [
+          "api-ready.v1",
+          "discovery-only.v1"
+        ],
+        "default": "api-ready.v1",
+        "description": "Fixed GET-only profile. Discovery-only explicitly omits readiness and provides lower assurance; never silently selected."
+      },
+      "HealthComponent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "state",
+          "duration_ms"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PASSING",
+              "FAILING"
+            ]
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "http_status": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ClusterHealth": {
+        "type": "object",
+        "description": "API observation from the backend egress path, independent of reservations and manual maintenance. Staleness is derived using database time. A passing GET profile does not verify developer identity or workload permissions. Existing bookings/access remain intact when health fails.",
+        "required": [
+          "mode",
+          "state",
+          "profile",
+          "reason_code",
+          "duration_ms",
+          "max_age_seconds",
+          "consecutive_successes",
+          "readiness_confirmed",
+          "discovery_coverage",
+          "identity_verification",
+          "components",
+          "check_pending",
+          "configuration_generation",
+          "policy_revision"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/HealthMode"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN",
+              "RECOVERING",
+              "PASSING",
+              "FAILING",
+              "STALE"
+            ]
+          },
+          "profile": {
+            "$ref": "#/components/schemas/HealthProfile"
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "Fixed safe diagnostic category; never raw upstream text."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_age_seconds": {
+            "type": "integer",
+            "enum": [
+              90
+            ]
+          },
+          "consecutive_successes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "readiness_confirmed": {
+            "type": "boolean"
+          },
+          "discovery_coverage": {
+            "type": "string",
+            "enum": [
+              "not_completed",
+              "aggregated",
+              "baseline"
+            ]
+          },
+          "identity_verification": {
+            "type": "string",
+            "enum": [
+              "NOT_CHECKED"
+            ]
+          },
+          "components": {
+            "type": "array",
+            "maxItems": 7,
+            "items": {
+              "$ref": "#/components/schemas/HealthComponent"
+            }
+          },
+          "check_pending": {
+            "type": "boolean"
+          },
+          "configuration_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_success_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "next_check_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HealthCheckRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "pending",
+          "health"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Coalesced check-request identity; acceptance does not imply success."
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ClusterHealth"
+          }
+        }
+      },
+      "HealthModeSettings": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/HealthMode"
           }
         }
       }

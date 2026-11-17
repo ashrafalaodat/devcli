@@ -197,8 +197,12 @@ func (t *Tx) autoBookPAT(ctx context.Context, u model.Identity, patID string, po
 	if err != nil {
 		return err
 	}
+	now, err := t.now(ctx)
+	if err != nil {
+		return err
+	}
 	for _, cluster := range clusters { // clusters is ordered by immutable ID.
-		if cluster.Maintenance || len(cluster.Participants) != 0 || !model.Match(cluster, model.Booking{Selector: policy.Selector}) {
+		if cluster.Maintenance || !cluster.HealthEligible(now) || len(cluster.Participants) != 0 || !model.Match(cluster, model.Booking{Selector: policy.Selector}) {
 			continue
 		}
 		booking, _, err := t.book(ctx, u, model.Booking{Cluster: cluster.ID, Selector: policy.Selector}, "pat-auto-"+uuid.NewString())
@@ -207,5 +211,5 @@ func (t *Tx) autoBookPAT(ctx context.Context, u model.Identity, patID string, po
 		}
 		return t.audit(ctx, u.Key(), "pat_auto_book", booking.ID, fmt.Sprintf("PAT %s requested an exclusive fallback booking; selector=%s; existing primary absent", patID, mustSelectorJSON(policy.Selector)))
 	}
-	return fmt.Errorf("%w: automatic booking needs an unused cluster matching the saved PAT selector", scheduler.ErrUnavailable)
+	return fmt.Errorf("%w: automatic booking needs an unused cluster matching the saved PAT selector and health policy", scheduler.ErrUnavailable)
 }

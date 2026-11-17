@@ -169,7 +169,7 @@ func (s *Store) Settings(ctx context.Context, u model.Identity) (model.Settings,
 		return v, ErrForbidden
 	}
 	var seconds int
-	err := s.Pool.QueryRow(ctx, "SELECT default_max_bookings,inactivity_grace_seconds FROM application_settings WHERE singleton").Scan(&v.DefaultMaxBookings, &seconds)
+	err := s.Pool.QueryRow(ctx, "SELECT default_max_bookings,inactivity_grace_seconds,health_mode FROM application_settings WHERE singleton").Scan(&v.DefaultMaxBookings, &seconds, &v.HealthMode)
 	v.InactivityGracePeriod = (time.Duration(seconds) * time.Second).String()
 	return v, err
 }
