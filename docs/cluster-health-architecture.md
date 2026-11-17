@@ -75,7 +75,7 @@ devctl admin cluster check CLUSTER_ID --reason 'Investigate connectivity' --wait
 devctl admin cluster profile CLUSTER_ID --profile discovery-only.v1 --reason 'Reviewed readiness permission exception'
 ```
 
-A completed cycle may still be `RECOVERING`; CLI waiting does not promise passing health after one request. Failed checks return exit code4. The Slate registry shows Health separately from Placement and Holders. Its Health dialog shows timestamps, fixed diagnostic categories, component outcomes and assurance coverage. Current holders retain release, selection and contact controls during an outage. Browser mutations require authentication, administrator authorization, exact Origin and CSRF protection.
+A completed cycle may still be `RECOVERING`; CLI waiting does not promise passing health after one request. Failed checks return exit code4. The Slate registry shows Health separately from Placement and Holders. The Health indicator shows the latest automatic result, while check-profile configuration remains in the cluster editor. The Manage column contains only Edit cluster and Deregister; the editor includes a Maintenance section. There is no manual health-request action in the GUI. Current holders retain release, selection and contact controls during an outage. Browser mutations require authentication, administrator authorization, exact Origin and CSRF protection.
 
 The public backend `/healthz` checks its process; `/readyz` checks PostgreSQL. Neither becomes dependent on remote cluster reachability.
 

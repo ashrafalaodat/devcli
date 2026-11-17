@@ -1,5 +1,14 @@
 # Gateway verification record
 
+## 2026-11-17: simplify cluster management actions
+
+Implemented and tested:
+
+- The cluster registry Manage column contains only the existing text buttons **Edit cluster…** and **Deregister…**. Removed the separate Health/manual-check dialog and Maintenance/Enable placement actions. Maintenance now has its own explanatory section inside the versioned cluster editor; its save still requires the same audit reason and concurrency checks. The read-only Health column and automatic backend checks remain. CLI/API diagnostic check operations are unchanged.
+- Removed unused dialog code and updated the README/health guide. Corrected stale conditional-enforcement wording in the developer catalogue. No schema, dependency, authentication or Kubernetes-operation changes were needed.
+- `make build frontend-check` passed: production React/Go binaries, TypeScript and14 frontend unit cases. `npm run test:ui --prefix frontend` passed the full strict-CSP Chrome desktop/mobile suite, including exactly two Manage actions, no GUI health-request mutation, maintenance reason/busy/error recovery, stale profile saves, credential handling and deregistration. `go test ./internal/webui -count=1`, `node --check internal/webui/testdata/primary-ui.cjs` and `git diff --check` passed.
+- Gracefully restarted only the owned host backend; verified-CA readiness and served/built JavaScript comparison passed on HTTPS127.0.0.1:9090. Existing PostgreSQL and Keycloak Compose services were left running. No real cluster resources were changed. This frontend adjustment did not rerun real-cluster or corporate-identity deployment tests; the previous backend validation is recorded below.
+
 ## 2026-11-17: automatic health and full administrator cluster editor
 
 Implemented and tested:

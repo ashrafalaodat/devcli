@@ -54,7 +54,7 @@ export default function Clusters({data, api, refresh, notify, navigate, requestB
       })}</tbody></table>}
       <div className="table-footer"><span>{shown.length} of {clusters.length} clusters</span><span>Filters apply to this view only</span></div>
     </section>
-    <div className="notice"><Icon name="info"/><p>Health checks describe API connectivity from the backend. When enforcement is enabled, new bookings require fresh passing checks. They do not verify workload permissions, available CPU or application readiness.</p></div>
+    <div className="notice"><Icon name="info"/><p>Health checks describe API connectivity from the backend. New bookings require fresh passing checks. They do not verify workload permissions, available CPU or application readiness.</p></div>
     <div className="two-columns compact-panels"><section className="panel"><h3>Exclusive comes first</h3><p>A free cluster is reserved for you. Other developers cannot join unless you enable sharing.</p></section><section className="panel"><h3>Share with context</h3><p>See holder names and contact details, then coordinate directly before sharing an environment.</p></section></div>
   </>;
 }

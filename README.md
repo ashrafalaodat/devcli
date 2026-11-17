@@ -209,7 +209,7 @@ Sign in as `admin`; administrator navigation appears in the sidebar and on mobil
 - Set a developer override or clear it to inherit the default. The view shows held counts, effective limits and primary selections. Developers appear after their first application login.
 - Register an approved static kubeconfig, which is encrypted before storage. The backend automatically checks every registered cluster using read-only Kubernetes requests; registration and booking create no cluster resources.
 - Edit the registration through **Cluster registry → Edit cluster…**: display name, placement labels, maintenance, maximum shared holders and health profile. The permanent cluster ID and current bookings remain unchanged. Labels use Kubernetes syntax, allow empty values and are limited to32 entries.
-- Enable/disable maintenance, release bookings and revoke another user's PAT with an audit reason.
+- Enable/disable maintenance in **Edit cluster… → Maintenance**, release bookings and revoke another user's PAT with an audit reason.
 - Deregister an unused cluster from **Administration → Cluster registry** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
 - Inspect allocation and administration audit records, which never include credential values. To view or edit the original kubeconfig, open **Edit cluster…**, enter an audit reason and choose **Reveal kubeconfig**. Edit its YAML and choose **Save cluster**. Only SSO administrators can do this; developers keep gateway-only configurations.
 
@@ -241,7 +241,7 @@ Deregistration removes the stored kubeconfig and hides the cluster from booking/
 
 The backend automatically monitors every live registered cluster. There is no Disabled/Observe/Enforce setting, environment switch or enablement step. Existing databases upgrade to this behavior while preserving reservations and stored credentials. New bookings, including shared joins and PAT fallback, require fresh passing checks; the gateway continues serving existing holders under its normal authorization rules.
 
-Each registry row has a separate **Health** indicator and **Health…** action for details, a manual recheck and the fixed check profile. The default `api-ready.v1` checks verified TLS, version, discovery and `/readyz`. An explicit `discovery-only.v1` exception omits readiness and displays that lower assurance. A readiness permission error never silently downgrades the profile. Checks create no Kubernetes resources or RBAC bindings, never use developer PATs and never extend booking activity.
+Each registry row has a read-only **Health** indicator. Its Manage column contains only **Edit cluster…** and **Deregister…**; health checks run automatically without a request button. The fixed check profile and Maintenance section are part of **Edit cluster…**. The default `api-ready.v1` checks verified TLS, version, discovery and `/readyz`. An explicit `discovery-only.v1` exception omits readiness and displays that lower assurance. A readiness permission error never silently downgrades the profile. Checks create no Kubernetes resources or RBAC bindings, never use developer PATs and never extend booking activity.
 
 ```bash
 devctl clusters

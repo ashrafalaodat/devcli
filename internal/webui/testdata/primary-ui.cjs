@@ -14,7 +14,7 @@ const administrator = {issuer: 'https://issuer.test', subject: 'admin', name: 'a
 const state = {
   primary: 's-a', version: 1, defaultLimit: 1, inactivityGrace: '4h', override: 2, serial: 0, patSerial: 0, pats: [], mutations: [], requests: [], unauthorized: [], signedOut: false, retired: new Set(), deregistrationConflict: null, registryReads: 0,
   registry: new Map(['a', 'b', 'c'].map(id => [id, {id, name: `Cluster ${id.toUpperCase()}`, labels: {test: 'ui'}, max_participants: 2, registry_version: 1, health_profile:'api-ready.v1'}])),
-  webhooks: [], webhookDeliveries: [], webhookConflict: false, webhookActionFailure: false, webhookResolveConflict: false, labelFailure: false, labelConflict: null, credentials: new Map(), healthRecords: new Map(), healthProfileConflict: false, healthCheckFailure: false,
+  webhooks: [], webhookDeliveries: [], webhookConflict: false, webhookActionFailure: false, webhookResolveConflict: false, labelFailure: false, labelConflict: null, credentials: new Map(), healthRecords: new Map(), profileConflict: false,
   sharing: new Map(), bookingKeys: [], bookingFailure: false, sessionFailure: false, audit: [{id: 1, at: new Date(fixtureStartedAt - 1000).toISOString(), actor: 'admin', action: 'settings.updated', object_id: 'team-policy', detail: 'Fixture policy reason'}, {id: 2, at: new Date(fixtureStartedAt - 3600000).toISOString(), actor: 'alice', action: 'session.created', object_id: 's-a', detail: '<img src=x onerror=alert(1)>'}], maintenance: new Map(), registrationFailure: false, maintenanceFailure: false, releaseFailure: false, heldRequest: null, kubernetesRequests: 0, profileReads: 0,
   sessions: ['a', 'b'].map(id => ({id: `s-${id}`, owner: 'alice', name: 'alice', display_name: 'Alice Developer', email: alice.email, cluster: id, state: 'ACTIVE', primary: id === 'a', created_at: new Date(fixtureStartedAt - 1800000).toISOString(), expires_at: new Date(fixtureStartedAt + 4 * 3600000).toISOString(), reason: 'fixture'})),
 };
@@ -23,7 +23,7 @@ const sessionRows = () => state.sessions.map(s => ({...s, primary: s.id === stat
 const primary = () => sessionRows().find(s => s.id === state.primary && s.state === 'ACTIVE');
 const profile = admin => ({owner_id: admin ? 'admin' : 'alice', user: admin ? administrator : alice, max_bookings: admin ? state.defaultLimit : state.override ?? state.defaultLimit, max_bookings_override: admin ? null : state.override, active_bookings: admin ? 0 : state.sessions.filter(s => s.state === 'ACTIVE' && s.owner === 'alice').length, primary_session: admin ? null : primary(), selection_version: state.version});
 const webhookEvents = [{name:'book',description:'Booking created',cluster:true,blocking:false},{name:'cluster_idle',description:'Last booking ended',cluster:true,blocking:true},{name:'browser_login',description:'Browser login completed',cluster:false,blocking:false}];
-const healthFor = id => ({state: 'PASSING', profile: 'api-ready.v1', reason_code: 'not_checked', duration_ms: 0, max_age_seconds: 90, consecutive_successes: 0, readiness_confirmed: false, discovery_coverage: 'not_completed', identity_verification: 'NOT_CHECKED', check_pending: false, configuration_generation: 1, policy_revision: 1, ...state.healthRecords.get(id)});
+const healthFor = id => ({state: 'PASSING', profile: state.registry.get(id)?.health_profile || 'api-ready.v1', reason_code: 'not_checked', duration_ms: 0, max_age_seconds: 90, consecutive_successes: 0, readiness_confirmed: false, discovery_coverage: 'not_completed', identity_verification: 'NOT_CHECKED', check_pending: false, configuration_generation: 1, policy_revision: 1, ...state.healthRecords.get(id)});
 const clusters = () => Array.from(state.registry.values()).filter(c => !state.retired.has(c.id)).map(c => {
  const health=healthFor(c.id), participants=sessionRows().filter(s=>s.cluster===c.id&&s.state==='ACTIVE');
  const capacity=!state.maintenance.get(c.id)&&(!participants.length||state.sharing.get(c.id)&&participants.length<c.max_participants);
@@ -113,16 +113,6 @@ const server = http.createServer(async (req, res) => {
       if(state.webhookActionFailure){state.webhookActionFailure=false;reply(res,503,{error:'Fixture webhook storage unavailable'});return;}
       run.state=pieces[5]==='resolve'?'RESOLVED':'PENDING';run.updated_at=new Date().toISOString();reply(res,200,run);return;
     }
-    if (/^\/v1\/admin\/clusters\/[^/]+\/health-check$/.test(url.pathname) && req.method === 'POST') {
-      const id=url.pathname.split('/')[4];assert.ok(body.reason?.trim());
-      if(state.healthCheckFailure){state.healthCheckFailure=false;reply(res,503,{error:'Fixture health queue unavailable'});return;}
-      state.healthRecords.set(id,{...healthFor(id),check_pending:true});reply(res,202,{id:'hc-ui-fixture',pending:true,health:healthFor(id)});return;
-    }
-    if (/^\/v1\/admin\/clusters\/[^/]+\/health-profile$/.test(url.pathname) && req.method === 'PATCH') {
-      const id=url.pathname.split('/')[4];assert.ok(body.reason?.trim());const previous=healthFor(id);
-      if(state.healthProfileConflict){state.healthProfileConflict=false;state.healthRecords.set(id,{...previous,policy_revision:previous.policy_revision+1});reply(res,409,{error:'Fixture health profile changed; reload and review'});return;}
-      assert.equal(body.expected_revision,previous.policy_revision);assert.ok(['api-ready.v1','discovery-only.v1'].includes(body.profile));state.healthRecords.set(id,{...previous,profile:body.profile,policy_revision:previous.policy_revision+1,state:'UNKNOWN',reason_code:'configuration_changed',checked_at:undefined,check_pending:false});reply(res,200,healthFor(id));return;
-    }
     if (url.pathname === '/auth/logout' && req.method === 'POST') {
       for (const session of state.sessions) if (session.owner === 'alice' && session.state === 'ACTIVE') session.state = 'RELEASED';
       state.primary = null; state.version++; state.signedOut = true;
@@ -198,19 +188,16 @@ const server = http.createServer(async (req, res) => {
       assert.ok(Number.isInteger(body.max_participants)&&body.max_participants>=2&&body.max_participants<=10);
       const id=url.pathname.split('/').at(-1),record=state.registry.get(id);
       if(!record||state.retired.has(id)){reply(res,404,{error:'Fixture cluster not found'});return;}
+      if(state.profileConflict){state.profileConflict=false;record.health_profile='discovery-only.v1';record.registry_version++;}
       if(state.labelConflict?.id===id){record.labels=structuredClone(state.labelConflict.labels);record.registry_version++;state.labelConflict=null;}
       if(body.expected_version!==record.registry_version){reply(res,409,{error:'Cluster registration changed. Reload the current registration before saving.'});return;}
+      if(state.maintenanceFailure){state.maintenanceFailure=false;reply(res,503,{error:'Fixture maintenance rejected'});return;}
       if(state.labelFailure){state.labelFailure=false;reply(res,503,{error:'Fixture labels rejected; retry this edit'});return;}
+      const previous=healthFor(id);
+      if(body.health_profile!==record.health_profile||Object.hasOwn(body,'kubeconfig'))state.healthRecords.set(id,{...previous,state:'UNKNOWN',reason_code:'configuration_changed',checked_at:undefined,consecutive_successes:0,profile:body.health_profile,policy_revision:previous.policy_revision+(body.health_profile!==record.health_profile?1:0),configuration_generation:previous.configuration_generation+(Object.hasOwn(body,'kubeconfig')?1:0)});
       if(Object.hasOwn(body,'kubeconfig'))state.credentials.set(id,body.kubeconfig);
       record.name=body.name;record.labels=structuredClone(body.labels);record.max_participants=body.max_participants;record.health_profile=body.health_profile;record.registry_version++;state.maintenance.set(id,body.maintenance);
       reply(res,200,clusters().find(value=>value.id===id));return;
-    }
-    if (/^\/v1\/admin\/clusters\/[^/]+$/.test(url.pathname) && req.method === 'PATCH') {
-      assert.deepEqual(Object.keys(body).sort(), ['maintenance', 'reason']); assert.equal(typeof body.maintenance, 'boolean'); assert.ok(body.reason.trim()); assert.equal(body.reason, body.reason.trim());
-      const id = url.pathname.split('/').at(-1);
-      if (!state.registry.has(id) || state.retired.has(id)) { reply(res, 404, {error: 'Fixture cluster not found'}); return; }
-      if (state.maintenanceFailure) { state.maintenanceFailure = false; reply(res, 503, {error: 'Fixture maintenance rejected'}); return; }
-      state.maintenance.set(id, body.maintenance); state.registry.get(id).registry_version++; reply(res, 200, {status: 'updated'}); return;
     }
     if (/^\/v1\/admin\/sessions\/[^/]+\/release$/.test(url.pathname) && req.method === 'POST') {
       assert.deepEqual(Object.keys(body), ['reason']); assert.ok(body.reason.trim()); assert.equal(body.reason, body.reason.trim());
@@ -489,6 +476,9 @@ const server = http.createServer(async (req, res) => {
     assert.equal(state.sessions.filter(value=>value.state==='ACTIVE').length,1);
     await nav(adminPage,'admin-clusters');
     const adminRow=id=>adminPage.locator(`#maintenance-list [data-cluster-id="${id}"]`);
+    const openLabels=async id=>{await adminRow(id).getByRole('button',{name:'Edit cluster…',exact:true}).click();const view=dialog(adminPage,`Edit cluster: ${state.registry.get(id).name}`);await view.waitFor();return view;};
+    for(const row of await adminPage.locator('#maintenance-list [data-cluster-id]').all())assert.deepEqual((await row.locator('td[data-label="Manage"] button').allTextContents()).map(text=>text.trim()),['Edit cluster…','Deregister…'],'Manage keeps exactly two clearly labelled actions');
+    assert.equal(await adminPage.getByRole('button',{name:/^(Health…|Maintenance…|Enable placement…|Request check)$/}).count(),0,'health and maintenance have no separate registry actions');
     const deregistrations=()=>state.mutations.filter(value=>value.method==='DELETE'&&value.path.startsWith('/v1/admin/clusters/'));
     assert.equal(await adminRow('c').getByRole('button',{name:/^Deregister/}).isDisabled(),true);
     assert.match(await adminRow('c').innerText(),/Release.*active booking/i);
@@ -534,30 +524,32 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await registration.locator('input[name=id]').inputValue(),''); assert.equal(await registration.locator('input[name=kubeconfig]').evaluate(input=>input.files.length),0);
     await closeDialog(adminPage,registration); await expectStorageEmpty(adminPage);
 
+    // Maintenance belongs to the versioned editor, with the same audit and
+    // busy/error behavior as every other cluster change.
     const maintenancePath='/v1/admin/clusters/ui-registered', maintenanceUpdates=()=>mutation(maintenancePath,'PATCH');
-    await adminRow('ui-registered').getByRole('button',{name:'Maintenance…',exact:true}).click(); let maintenance=dialog(adminPage,'Pause placement for UI registration fixture?');
-    await maintenance.locator('input[name=reason]').fill('  '); await maintenance.getByRole('button',{name:'Set maintenance',exact:true}).click();
-    await maintenance.getByRole('alert').filter({hasText:/audit reason/i}).waitFor(); assert.equal(maintenanceUpdates().length,0);
-    await maintenance.locator('input[name=reason]').fill('  UI rejected maintenance  '); state.maintenanceFailure=true;
-    const heldMaintenance=holdRequest('PATCH',maintenancePath), rejectedMaintenance=responseFor(adminPage, response=>new URL(response.url()).pathname===maintenancePath&&response.request().method()==='PATCH');
-    try {
-      await maintenance.getByRole('button',{name:'Set maintenance',exact:true}).click(); await heldMaintenance.arrived;
+    let maintenance=await openLabels('ui-registered');
+    await maintenance.getByRole('heading',{name:'Maintenance',exact:true}).waitFor();
+    await maintenance.locator('#cluster-edit-placement').selectOption('maintenance');
+    await maintenance.locator('#cluster-label-reason').fill('  ');await maintenance.getByRole('button',{name:'Save cluster',exact:true}).click();
+    await maintenance.getByRole('alert').filter({hasText:/audit reason/i}).waitFor();assert.equal(maintenanceUpdates().length,0);
+    await maintenance.locator('#cluster-label-reason').fill('  UI rejected maintenance  ');state.maintenanceFailure=true;
+    const heldMaintenance=holdRequest('PATCH',maintenancePath),rejectedMaintenance=responseFor(adminPage,response=>new URL(response.url()).pathname===maintenancePath&&response.request().method()==='PATCH');
+    try{
+      await maintenance.getByRole('button',{name:'Save cluster',exact:true}).click();await heldMaintenance.arrived;
       assert.equal(await maintenance.locator('button[type=submit]').isDisabled(),true);
-    } finally {heldMaintenance.release();}
-    assert.equal((await rejectedMaintenance).status(),503); await maintenance.getByRole('alert').filter({hasText:'Fixture maintenance rejected'}).waitFor();
-    assert.equal(state.maintenance.get('ui-registered')||false,false);
-    await maintenance.locator('input[name=reason]').fill('  UI maintenance on  '); await maintenance.getByRole('button',{name:'Set maintenance',exact:true}).click(); await maintenance.waitFor({state:'hidden'});
-    assert.deepEqual(maintenanceUpdates().at(-1).body,{maintenance:true,reason:'UI maintenance on'}); assert.equal(clusters().find(value=>value.id==='ui-registered').available,false);
-    await adminRow('ui-registered').getByRole('button',{name:'Enable placement…',exact:true}).click(); maintenance=dialog(adminPage,'Enable placement for UI registration fixture?');
-    await maintenance.locator('input[name=reason]').fill('  UI maintenance off  '); await maintenance.getByRole('button',{name:'Enable placement',exact:true}).click(); await maintenance.waitFor({state:'hidden'});
-    assert.deepEqual(maintenanceUpdates().at(-1).body,{maintenance:false,reason:'UI maintenance off'});
+    }finally{heldMaintenance.release();}
+    assert.equal((await rejectedMaintenance).status(),503);await maintenance.getByRole('alert').filter({hasText:'Fixture maintenance rejected'}).waitFor();assert.equal(state.maintenance.get('ui-registered')||false,false);
+    await maintenance.locator('#cluster-label-reason').fill('  UI maintenance on  ');await maintenance.getByRole('button',{name:'Save cluster',exact:true}).click();await maintenance.waitFor({state:'hidden'});
+    assert.deepEqual(maintenanceUpdates().at(-1).body,{expected_version:1,name:'UI registration fixture',labels:{region:'eu',purpose:'gui'},maintenance:true,max_participants:3,health_profile:'api-ready.v1',reason:'UI maintenance on'});assert.equal(clusters().find(value=>value.id==='ui-registered').available,false);
+    maintenance=await openLabels('ui-registered');await maintenance.locator('#cluster-edit-placement').selectOption('enabled');await maintenance.locator('#cluster-label-reason').fill('  UI maintenance off  ');await maintenance.getByRole('button',{name:'Save cluster',exact:true}).click();await maintenance.waitFor({state:'hidden'});
+    assert.equal(maintenanceUpdates().at(-1).body.maintenance,false);assert.equal(maintenanceUpdates().at(-1).body.expected_version,2);assert.equal(maintenanceUpdates().at(-1).body.reason,'UI maintenance off');
 
     // Labels are devctl placement metadata, not Kubernetes object mutations.
     // A fixed base snapshot prevents a background refresh or a concurrent
     // administrator from silently replacing the draft being reviewed.
-    const labelChanges=()=>state.mutations.filter(value=>value.method==='PATCH'&&Object.hasOwn(value.body,'labels'));
+    const labelMutationStart=state.mutations.length;
+    const labelChanges=()=>state.mutations.slice(labelMutationStart).filter(value=>value.method==='PATCH'&&Object.hasOwn(value.body,'labels'));
     const beforeLabelSessions=structuredClone(state.sessions), beforeLabelPATs=structuredClone(state.pats), beforeLabelPrimary=state.primary, beforeLabelVersion=state.version;
-    const openLabels=async id=>{await adminRow(id).getByRole('button',{name:'Edit cluster…',exact:true}).click();const view=dialog(adminPage,`Edit cluster: ${state.registry.get(id).name}`);await view.waitFor();return view;};
     const labelRows=view=>view.locator('[data-label-row]');
     const findLabelRow=async(view,key)=>{for(let index=0;index<await labelRows(view).count();index++){const row=labelRows(view).nth(index);if(await row.locator('input[name=label_key]').inputValue()===key)return row;}throw new Error(`Missing label row ${key}`);};
     let labels=await openLabels('c');
@@ -629,8 +621,8 @@ const server = http.createServer(async (req, res) => {
 
     // Maintenance and active holders do not block metadata edits; clearing
     // labels is explicit and never toggles placement or releases reservations.
-    await adminRow('ui-registered').getByRole('button',{name:'Maintenance…',exact:true}).click();maintenance=dialog(adminPage,'Pause placement for UI registration fixture?');
-    await maintenance.locator('input[name=reason]').fill('Metadata edit during planned maintenance');await maintenance.getByRole('button',{name:'Set maintenance',exact:true}).click();await maintenance.waitFor({state:'hidden'});
+    maintenance=await openLabels('ui-registered');await maintenance.locator('#cluster-edit-placement').selectOption('maintenance');
+    await maintenance.locator('#cluster-label-reason').fill('Metadata edit during planned maintenance');await maintenance.getByRole('button',{name:'Save cluster',exact:true}).click();await maintenance.waitFor({state:'hidden'});
     labels=await openLabels('ui-registered');await labels.getByRole('button',{name:'Remove all labels',exact:true}).click();
     await labels.getByText(/Saving removes every registry label/).waitFor();await labels.locator('input[name=reason]').fill('Remove obsolete placement tags');
     await labels.getByRole('button',{name:'Save cluster',exact:true}).click();await labels.waitFor({state:'hidden'});
@@ -685,17 +677,19 @@ const server = http.createServer(async (req, res) => {
     // Health checks always run and gate new bookings independently of live holds.
     const healthBookingSnapshot=state.sessions.map(({id,state,cluster})=>({id,state,cluster})), healthPATSnapshot=structuredClone(state.pats), healthPrimary=state.primary;
     assert.equal(await adminPage.getByRole('button',{name:'Health monitoring settings…',exact:true}).count(),0);
-    await adminRow('c').getByRole('button',{name:'Health…',exact:true}).click();let healthDialog=dialog(adminPage,'Cluster health');
-    await healthDialog.getByText('Checks passing',{exact:true}).waitFor();assert.equal(await healthDialog.getByRole('button',{name:'Request check',exact:true}).isDisabled(),false);
-    await healthDialog.locator('#cluster-health-reason').fill('Inspect the API');state.healthCheckFailure=true;await healthDialog.getByRole('button',{name:'Request check',exact:true}).click();await healthDialog.getByRole('alert').filter({hasText:'Fixture health queue unavailable'}).waitFor();assert.equal(await healthDialog.locator('#cluster-health-reason').inputValue(),'Inspect the API');
-    await healthDialog.getByRole('button',{name:'Request check',exact:true}).click();await healthDialog.getByText('Check queued or running',{exact:true}).waitFor();assert.equal(healthFor('c').check_pending,true);
-    await healthDialog.locator('#cluster-health-profile').selectOption('discovery-only.v1');await healthDialog.getByText(/lower-assurance profile/).waitFor();state.healthProfileConflict=true;await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).click();await healthDialog.getByRole('alert').waitFor();assert.equal(await healthDialog.locator('#cluster-health-profile').inputValue(),'discovery-only.v1');assert.equal(await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).isDisabled(),true);
-    await healthDialog.getByRole('button',{name:'Reload health profile',exact:true}).click();await healthDialog.locator('#cluster-health-profile').selectOption('discovery-only.v1');await healthDialog.getByRole('button',{name:'Save health profile',exact:true}).click();await healthDialog.waitFor({state:'hidden'});assert.equal(healthFor('c').profile,'discovery-only.v1');assert.equal(healthFor('c').state,'UNKNOWN');
+    assert.equal(await adminPage.getByRole('button',{name:'Health…',exact:true}).count(),0);
+    assert.equal(await adminPage.getByRole('button',{name:'Request check',exact:true}).count(),0);
+    // Profile edits use the same registry version. A concurrent profile change
+    // keeps the draft visible until an explicit reload, just like label edits.
+    let healthEditor=await openLabels('c');await healthEditor.locator('#cluster-edit-profile').selectOption('discovery-only.v1');await healthEditor.locator('#cluster-label-reason').fill('Review profile change');state.profileConflict=true;
+    await healthEditor.getByRole('button',{name:'Save cluster',exact:true}).click();await healthEditor.getByRole('alert').waitFor();assert.equal(await healthEditor.locator('#cluster-edit-profile').inputValue(),'discovery-only.v1');assert.equal(await healthEditor.getByRole('button',{name:'Save cluster',exact:true}).isDisabled(),true);
+    await healthEditor.getByRole('button',{name:'Reload current registration',exact:true}).click();await healthEditor.locator('#cluster-edit-profile').selectOption('api-ready.v1');await healthEditor.getByRole('button',{name:'Save cluster',exact:true}).click();await healthEditor.waitFor({state:'hidden'});assert.equal(state.registry.get('c').health_profile,'api-ready.v1');assert.equal(healthFor('c').state,'UNKNOWN');
     state.registry.set('health-free',{id:'health-free',name:'Health fixture',labels:{test:'ui'},max_participants:2,registry_version:1});state.healthRecords.set('health-free',{state:'FAILING',reason_code:'connect_timeout',checked_at:new Date().toISOString()});state.healthRecords.set('c',{...healthFor('c'),state:'FAILING',reason_code:'tls_untrusted',checked_at:new Date().toISOString()});
     await nav(page,'clusters');await page.getByRole('searchbox',{name:'Search clusters',exact:true}).fill('');await page.clock.runFor(10);await page.getByRole('button',{name:'Refresh',exact:true}).click();const unhealthyRow=page.locator('[data-cluster-id="health-free"]');await unhealthyRow.getByText('Check failed',{exact:true}).waitFor();assert.equal(await unhealthyRow.getByRole('button',{name:'Book cluster',exact:true}).count(),0);assert.match(await unhealthyRow.innerText(),/Unavailable/);
     const heldHealthRow=page.locator('[data-cluster-id="c"]');assert.equal(await heldHealthRow.getByRole('button',{name:'View booking',exact:true}).isEnabled(),true);assert.deepEqual(state.sessions.map(({id,state,cluster})=>({id,state,cluster})),healthBookingSnapshot);assert.deepEqual(state.pats,healthPATSnapshot);assert.equal(state.primary,healthPrimary);
     state.healthRecords.set('health-free',{...healthFor('health-free'),state:'PASSING',reason_code:'passing',checked_at:new Date().toISOString(),consecutive_successes:2,readiness_confirmed:true});await page.getByRole('button',{name:'Refresh',exact:true}).click();await unhealthyRow.getByRole('button',{name:'Book cluster',exact:true}).waitFor();
-    await adminPage.setViewportSize({width:390,height:844});await adminPage.getByRole('button',{name:'Refresh registry',exact:true}).click();await adminPage.locator('[data-cluster-id="health-free"]').getByRole('button',{name:'Health…',exact:true}).click();healthDialog=dialog(adminPage,'Cluster health');await expectNoOverflow(adminPage,'Mobile health configuration');await closeDialog(adminPage,healthDialog);await adminPage.setViewportSize({width:1440,height:1040});
+    await adminPage.setViewportSize({width:390,height:844});await adminPage.getByRole('button',{name:'Refresh registry',exact:true}).click();await expectNoOverflow(adminPage,'Mobile health summaries and two registry actions');await expectInWidth(adminRow('health-free').getByRole('button',{name:'Edit cluster…',exact:true}),390);await expectInWidth(adminRow('health-free').getByRole('button',{name:'Deregister…',exact:true}),390);await adminPage.setViewportSize({width:1440,height:1040});
+    assert.equal(state.mutations.filter(value=>/\/health-(check|profile)$/.test(value.path)).length,0,'GUI never requests a manual health check or uses the removed profile dialog');
     state.registry.delete('health-free');state.healthRecords.clear();await nav(page,'access');
 
     // Webhooks are configured locally; this page never contacts a receiver.
@@ -801,6 +795,6 @@ const server = http.createServer(async (req, res) => {
     assert.equal(state.sessions.filter(value=>value.state==='ACTIVE'&&value.owner==='alice').length,0); assert.equal(state.sessions.find(value=>value.id==='s-bob-shared').state,'ACTIVE','logout must preserve another developer’s booking'); await expectStorageEmpty(page);
     assert.deepEqual(nativeDialogs,[],'product flows must use accessible in-page dialogs'); assert.deepEqual(errors,[]); assert.deepEqual(cspErrors,[]); assert.equal(state.kubernetesRequests,0); assert.deepEqual(externalRequests,[]);
     await context.close();
-    console.log('Slate UI contracts passed: webhook disabled defaults, input validation, one-time secret clearing, stale-rule draft reload, retained holds, delivery retry/resolve confirmation/conflicts/errors and mobile controls; automatic health monitoring, independent check summaries and audited profiles, queue retry, stale-profile draft reload, health booking gates with existing holders/PATs/primary preserved, passing recovery and mobile health controls; audited full registry editing and protected kubeconfig text with row validation/empty values/32-label bound/atomic clear, retained drafts and explicit stale-label reload, mobile label editing and unchanged bookings/PATs, strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
+    console.log('Slate UI contracts passed: webhook disabled defaults, input validation, one-time secret clearing, stale-rule draft reload, retained holds, delivery retry/resolve confirmation/conflicts/errors and mobile controls; automatic health monitoring, independent check summaries and audited profile edits with stale-draft reload, health booking gates with existing holders/PATs/primary preserved, passing recovery and mobile health summaries; exactly two named Manage actions and maintenance through the full cluster editor; audited full registry editing and protected kubeconfig text with row validation/empty values/32-label bound/atomic clear, retained drafts and explicit stale-label reload, mobile label editing and unchanged bookings/PATs, strict production CSP, role-aware navigation, bootstrap loading/retry, modal keyboard/focus/Escape/background guards and 401 cancellation, mobile action records, per-primary activity/idle/hidden/throttling, stale-read selection ordering, retry idempotency, token creation/policies/revocation and immutable downloads, admin limits/inheritance, audited registration/maintenance/release/deregistration with validation/busy/error/retry/cancellation/conflict recovery, transient secrets, PAT-preserving logout, escaped text, browser storage and network isolation.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error=>{console.error(error.stack);server.close();process.exitCode=1;});
