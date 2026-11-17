@@ -346,6 +346,7 @@ func TestBrowserCookieAPIAndLogout(t *testing.T) {
 	if err = b.db.Register(t.Context(), admin, model.Cluster{ID: "browser-test", Name: "Browser test", MaxParticipants: 2, Labels: map[string]string{}}, []byte("encrypted-placeholder")); err != nil {
 		t.Fatal(err)
 	}
+	testutil.MarkHealthy(t, b.db, "browser-test")
 	for _, tt := range []struct{ name, csrf, origin string }{
 		{"missing CSRF", "", "https://gateway.example.test"},
 		{"wrong CSRF", "forged", "https://gateway.example.test"},

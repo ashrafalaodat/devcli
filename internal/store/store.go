@@ -96,7 +96,7 @@ func (t *Tx) sessions(ctx context.Context) ([]model.Session, error) {
 	return out, rows.Err()
 }
 func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster, error) {
-	rows, e := t.Query(ctx, "SELECT id,name,labels,maintenance,COALESCE(controller_session,''),shareable,max_participants FROM clusters WHERE deregistered_at IS NULL ORDER BY id")
+	rows, e := t.Query(ctx, "SELECT id,name,labels,maintenance,COALESCE(controller_session,''),shareable,max_participants,registry_version FROM clusters WHERE deregistered_at IS NULL ORDER BY id")
 	if e != nil {
 		return nil, e
 	}
@@ -105,7 +105,7 @@ func (t *Tx) clusters(ctx context.Context, ss []model.Session) ([]model.Cluster,
 	for rows.Next() {
 		var c model.Cluster
 		var raw []byte
-		if e = rows.Scan(&c.ID, &c.Name, &raw, &c.Maintenance, &c.ControllerSession, &c.Shareable, &c.MaxParticipants); e != nil {
+		if e = rows.Scan(&c.ID, &c.Name, &raw, &c.Maintenance, &c.ControllerSession, &c.Shareable, &c.MaxParticipants, &c.RegistryVersion); e != nil {
 			return nil, e
 		}
 		if e = json.Unmarshal(raw, &c.Labels); e != nil {

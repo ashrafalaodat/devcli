@@ -21,21 +21,10 @@ func runHealthCommand(t *testing.T, handler http.HandlerFunc, args ...string) (s
 	return out.String(), err
 }
 
-func TestAdminHealthModeRequiresAuditedChoice(t *testing.T) {
-	var changes atomic.Int32
-	output, err := runHealthCommand(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "PATCH" || r.URL.Path != "/v1/admin/health" {
-			t.Error("wrong policy operation")
-		}
-		var body map[string]string
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body["mode"] != "observe" || body["reason"] != "Approved read-only checks" {
-			t.Error("invalid policy", body)
-		}
-		changes.Add(1)
-		json.NewEncoder(w).Encode(map[string]string{"mode": "observe"})
-	}, "admin", "health", "--mode", "observe", "--reason", "  Approved read-only checks  ", "--json")
-	if err != nil || changes.Load() != 1 || !json.Valid([]byte(output)) {
-		t.Fatal(output, err)
+func TestAdminHealthModeCommandWasRemoved(t *testing.T) {
+	output, err := runHealthCommand(t, func(http.ResponseWriter, *http.Request) { t.Error("removed option contacted backend") }, "admin", "health", "--mode", "observe")
+	if err == nil || output != "" {
+		t.Fatal("removed mode command accepted", output, err)
 	}
 }
 
@@ -95,7 +84,7 @@ func TestAdminHealthCheckWaitCompletesRecoveringCycle(t *testing.T) {
 			return
 		}
 		gets.Add(1)
-		json.NewEncoder(w).Encode(map[string]any{"checked_at": after, "check_pending": false, "state": "RECOVERING", "mode": "enforce", "reason_code": "recovering"})
+		json.NewEncoder(w).Encode(map[string]any{"checked_at": after, "check_pending": false, "state": "RECOVERING", "reason_code": "recovering"})
 	}, "admin", "cluster", "check", "cluster-a", "--reason", "Verify API", "--wait", "--timeout", "2s", "--json")
 	if err != nil || posts.Load() != 1 || gets.Load() != 1 || !json.Valid([]byte(output)) || !strings.Contains(output, `"RECOVERING"`) {
 		t.Fatal("wait did not finish one completed cycle", output, err)
@@ -105,7 +94,7 @@ func TestAdminHealthCheckWaitCompletesRecoveringCycle(t *testing.T) {
 func TestAdminHealthFailedCheckProducesJSONAndNonzeroExit(t *testing.T) {
 	output, err := runHealthCommand(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(202)
-		json.NewEncoder(w).Encode(map[string]any{"id": "hc-fixture", "pending": false, "health": map[string]any{"checked_at": time.Now().UTC(), "check_pending": false, "state": "FAILING", "mode": "observe", "reason_code": "tls_untrusted"}})
+		json.NewEncoder(w).Encode(map[string]any{"id": "hc-fixture", "pending": false, "health": map[string]any{"checked_at": time.Now().UTC(), "check_pending": false, "state": "FAILING", "reason_code": "tls_untrusted"}})
 	}, "admin", "cluster", "check", "cluster-a", "--reason", "Inspect TLS", "--wait", "--json")
 	var failure *ExitError
 	if !errors.As(err, &failure) || failure.Code != 4 || !json.Valid([]byte(output)) || !strings.Contains(output, "tls_untrusted") {
@@ -133,7 +122,7 @@ func TestAdminHealthWaitIsBoundedAndDoesNotRepeatRequest(t *testing.T) {
 
 func TestAdminHealthWaitRejectsReconfiguredCycle(t *testing.T) {
 	output, err := runHealthCommand(t, func(w http.ResponseWriter, r *http.Request) {
-		h := map[string]any{"mode": "observe", "configuration_generation": 1, "policy_revision": 1, "checked_at": time.Now().UTC().Add(-time.Minute), "check_pending": true, "state": "UNKNOWN"}
+		h := map[string]any{"configuration_generation": 1, "policy_revision": 1, "checked_at": time.Now().UTC().Add(-time.Minute), "check_pending": true, "state": "UNKNOWN"}
 		if r.Method == "POST" {
 			w.WriteHeader(202)
 			json.NewEncoder(w).Encode(map[string]any{"id": "hc-fixture", "pending": true, "health": h})

@@ -78,30 +78,3 @@ func (s *Server) healthProfile(w http.ResponseWriter, r *http.Request) {
 	value, err := s.Store.GetHealth(r.Context(), r.PathValue("id"))
 	healthResponse(w, err, http.StatusOK, value)
 }
-
-func (s *Server) healthMode(w http.ResponseWriter, r *http.Request) {
-	value, err := s.Store.Settings(r.Context(), user(r))
-	healthResponse(w, err, http.StatusOK, map[string]any{"mode": value.HealthMode})
-}
-
-func (s *Server) updateHealthMode(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Mode   model.HealthMode `json:"mode"`
-		Reason string           `json:"reason"`
-	}
-	if err := decode(w, r, &body); err != nil || (body.Mode != "disabled" && body.Mode != "observe" && body.Mode != "enforce") {
-		fail(w, http.StatusBadRequest, "mode must be disabled, observe or enforce")
-		return
-	}
-	reason, valid := healthReason(body.Reason)
-	if !valid {
-		fail(w, http.StatusBadRequest, "an audit reason of 1 through 1000 bytes is required")
-		return
-	}
-	err := s.Store.SetHealthMode(r.Context(), user(r), body.Mode, reason)
-	if err != nil {
-		healthResponse(w, err, 0, nil)
-		return
-	}
-	s.healthMode(w, r)
-}

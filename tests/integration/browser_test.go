@@ -142,6 +142,7 @@ func TestBrowserAccess(t *testing.T) {
 		{"web-other", "Browser fixture B", otherUpstream.kubeconfig()},
 	} {
 		e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": registration.id, "name": registration.name, "labels": map[string]string{"test": "browser"}, "kubeconfig": registration.config}, 200)
+		testutil.MarkHealthy(t, db, registration.id)
 	}
 	var settings model.Settings
 	if err = json.Unmarshal(e.browserRequest(admin, "GET", "/v1/admin/settings", nil, 200), &settings); err != nil || settings.DefaultMaxBookings != 1 {
@@ -434,6 +435,7 @@ func TestBrowserAccess(t *testing.T) {
 	requestsBeforeDeregistration := len(upstream.Requests)
 	upstream.mu.Unlock()
 	e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": "web-retire", "name": "Browser retirement fixture", "kubeconfig": upstream.kubeconfig()}, 200)
+	testutil.MarkHealthy(t, db, "web-retire")
 	retiring := session(t, e.browserRequest(aliceAgain, "POST", "/v1/sessions", model.Booking{Cluster: "web-retire"}, 201))
 	e.browserRequest(aliceAgain, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "developer cannot deregister"}, 403)
 	e.browserRequest(admin, "DELETE", "/v1/admin/clusters/web-retire", map[string]string{"reason": "active browser booking blocks retirement"}, 409)

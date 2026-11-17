@@ -35,12 +35,11 @@ func (s *Server) webhooks(w http.ResponseWriter, r *http.Request) {
 		webhookReply(w, err, 0, nil)
 		return
 	}
-	settings, err := s.Store.Settings(r.Context(), user(r))
 	origins := s.WebhookPolicy.AllowedOrigins
 	if origins == nil {
 		origins = []string{}
 	}
-	webhookReply(w, err, 200, map[string]any{"rules": rules, "events": store.WebhookEvents(), "allowed_origins": origins, "health_mode": settings.HealthMode})
+	webhookReply(w, err, 200, map[string]any{"rules": rules, "events": store.WebhookEvents(), "allowed_origins": origins})
 }
 
 func (s *Server) saveWebhook(w http.ResponseWriter, r *http.Request) {

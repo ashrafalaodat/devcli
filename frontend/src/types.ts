@@ -44,15 +44,14 @@ export interface Cluster {
   deregistered_at?: string;
   lifecycle_holds?: number;
   health?: ClusterHealth;
+  registry_version: number;
   configuration_generation?: number;
   health_policy_revision?: number;
   health_profile?: HealthProfile;
 }
 
-export type HealthMode = 'disabled' | 'observe' | 'enforce';
 export type HealthProfile = 'api-ready.v1' | 'discovery-only.v1';
 export interface ClusterHealth {
-  mode: HealthMode;
   state: 'UNKNOWN' | 'RECOVERING' | 'PASSING' | 'FAILING' | 'STALE';
   profile: HealthProfile;
   reason_code: string;
@@ -101,7 +100,6 @@ export interface PAT {
 export interface Settings {
   default_max_bookings: number;
   inactivity_grace_period: string;
-  health_mode?: HealthMode;
 }
 
 export interface AuditEvent {
@@ -126,6 +124,7 @@ export interface Workspace {
 }
 
 export interface ApiOptions {
+  cache?: RequestCache;
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
@@ -160,7 +159,7 @@ export interface WebhookRule {
   version: number;
 }
 export interface WebhookEventType {name: string; description: string; cluster: boolean; blocking: boolean}
-export interface WebhookCatalogue {rules: WebhookRule[]; events: WebhookEventType[]; allowed_origins: string[]; health_mode?: HealthMode}
+export interface WebhookCatalogue {rules: WebhookRule[]; events: WebhookEventType[]; allowed_origins: string[]}
 export interface WebhookDelivery {
   id: string;
   webhook_id: string;

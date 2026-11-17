@@ -25,8 +25,8 @@ var webhookEvents = []WebhookEventType{
 	{"book", "Booking created", true, false}, {"release", "Booking released", true, false}, {"expire", "Booking expired", true, false},
 	{"cluster_idle", "Last booking ended", true, true}, {"share", "Sharing changed", true, false}, {"primary_select", "Primary selected", true, false},
 	{"register", "Cluster registered", true, false}, {"deregister", "Cluster deregistered", true, false}, {"maintenance", "Maintenance changed", true, false},
-	{"cluster_labels_update", "Registry labels changed", true, false}, {"cluster_health_transition", "Cluster health changed", true, false},
-	{"cluster_health_profile", "Health profile changed", true, false}, {"cluster_health_mode", "Health mode changed", false, false},
+	{"cluster_update", "Cluster registration changed", true, false}, {"cluster_labels_update", "Registry labels changed", true, false}, {"cluster_health_transition", "Cluster health changed", true, false},
+	{"cluster_health_profile", "Health profile changed", true, false},
 	{"pat_create", "Personal token created", false, false}, {"pat_revoke", "Personal token revoked", false, false}, {"pat_booking_update", "Token preferences changed", false, false},
 	{"booking_default_limit", "Default booking limit changed", false, false}, {"developer_booking_limit", "Developer booking limit changed", false, false},
 	{"inactivity_grace_period", "Inactivity policy changed", false, false}, {"browser_login", "Browser login completed", false, false}, {"logout", "Developer signed out", false, false},
@@ -155,15 +155,6 @@ func (s *Store) SaveWebhook(ctx context.Context, admin model.Identity, h Webhook
 	}
 	h.Name = strings.TrimSpace(h.Name)
 	err := s.update(ctx, func(t *Tx) error {
-		if h.Enabled && h.Blocking {
-			var mode string
-			if err := t.QueryRow(ctx, "SELECT health_mode FROM application_settings WHERE singleton").Scan(&mode); err != nil {
-				return err
-			}
-			if mode == "disabled" {
-				return fmt.Errorf("%w: enable health monitoring before enabling a blocking webhook", ErrConflict)
-			}
-		}
 		var previous Webhook
 		if expectedVersion > 0 {
 			var err error
@@ -515,7 +506,7 @@ func (s *Store) ReconcileWebhooks(ctx context.Context) error {
 				return err
 			}
 		}
-		rows, err = t.Query(ctx, `SELECT d.id,d.cluster_id FROM webhook_deliveries d JOIN cluster_health h ON h.cluster_id=d.cluster_id JOIN clusters c ON c.id=d.cluster_id CROSS JOIN application_settings a WHERE d.state='VERIFYING' AND a.health_mode<>'disabled' AND c.deregistered_at IS NULL AND h.observed_state='PASSING' AND h.checked_at>d.verify_after AND h.checked_at<=clock_timestamp() AND h.checked_at>clock_timestamp()-interval '90 seconds' AND h.started_at>=d.verify_after AND h.probe_sequence>=d.verify_sequence AND h.observed_configuration_generation=c.configuration_generation AND h.observed_policy_revision=c.health_policy_revision ORDER BY d.id`)
+		rows, err = t.Query(ctx, `SELECT d.id,d.cluster_id FROM webhook_deliveries d JOIN cluster_health h ON h.cluster_id=d.cluster_id JOIN clusters c ON c.id=d.cluster_id WHERE d.state='VERIFYING' AND c.deregistered_at IS NULL AND h.observed_state='PASSING' AND h.checked_at>d.verify_after AND h.checked_at<=clock_timestamp() AND h.checked_at>clock_timestamp()-interval '90 seconds' AND h.started_at>=d.verify_after AND h.probe_sequence>=d.verify_sequence AND h.observed_configuration_generation=c.configuration_generation AND h.observed_policy_revision=c.health_policy_revision ORDER BY d.id`)
 		if err != nil {
 			return err
 		}

@@ -69,7 +69,6 @@ func TestBrowserWebhooks(t *testing.T) {
 	admin, alice, bob := e.browserLogin("admin", true), e.browserLogin("alice", true), e.browserLogin("bob", true)
 	_, config := newHealthFixture(t, 200)
 	e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": "lifecycle-cluster", "name": "Lifecycle fixture", "labels": map[string]string{"purpose": "lifecycle"}, "kubeconfig": config}, 200)
-	e.browserRequest(admin, "PATCH", "/v1/admin/health", map[string]string{"mode": "observe", "reason": "Check the owned lifecycle fixture"}, 200)
 	getHealth := func() model.ClusterHealth {
 		var h model.ClusterHealth
 		if json.Unmarshal(e.browserRequest(alice, "GET", "/v1/clusters/lifecycle-cluster/health", nil, 200), &h) != nil {

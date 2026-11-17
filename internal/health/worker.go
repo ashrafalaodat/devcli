@@ -36,7 +36,7 @@ func NewWorker(db *store.Store, vault *kube.Vault) *Worker {
 
 // Run keeps bounded health work in the backend process. A transient database
 // failure is retried; process cancellation drains local probes without
-// manufacturing failure observations. Disabled mode is enforced by the queue.
+// manufacturing failure observations. Every live registration is checked.
 func (w *Worker) Run(ctx context.Context) error {
 	if w.Store == nil || w.Vault == nil {
 		return errors.New("health worker requires a store and vault")

@@ -37,34 +37,6 @@ func validateHealthCluster(id string) error {
 func clusterHealthPath(id string) string { return "/v1/clusters/" + url.PathEscape(id) + "/health" }
 
 func (c *Client) addHealthCommands(admin *cobra.Command) {
-	var mode, reason string
-	policy := &cobra.Command{Use: "health", Short: "Inspect or change cluster health monitoring policy", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		var out any
-		if !cmd.Flags().Changed("mode") {
-			if cmd.Flags().Changed("reason") {
-				return errors.New("--reason requires --mode")
-			}
-			if err := c.request(cmd.Context(), "GET", "/v1/admin/health", nil, "", &out); err != nil {
-				return err
-			}
-			return c.print(out)
-		}
-		if mode != "disabled" && mode != "observe" && mode != "enforce" {
-			return errors.New("--mode must be disabled, observe or enforce")
-		}
-		why, err := healthAuditReason(reason)
-		if err != nil {
-			return err
-		}
-		if err = c.request(cmd.Context(), "PATCH", "/v1/admin/health", map[string]string{"mode": mode, "reason": why}, "", &out); err != nil {
-			return err
-		}
-		fmt.Fprintln(c.Err, "Health policy saved. Observe/enforce schedule read-only API checks; existing bookings and access are preserved.")
-		return c.print(out)
-	}}
-	policy.Flags().StringVar(&mode, "mode", "", "Monitoring mode: disabled, observe or enforce")
-	policy.Flags().StringVar(&reason, "reason", "", "Required audit reason when changing monitoring policy")
-	admin.AddCommand(policy)
 	cluster := &cobra.Command{Use: "cluster", Short: "Inspect and configure cluster health checks"}
 	status := &cobra.Command{Use: "status CLUSTER_ID", Short: "Show the latest persisted health observation without probing", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateHealthCluster(args[0]); err != nil {
@@ -170,9 +142,6 @@ func (c *Client) waitForHealthCheck(ctx context.Context, id string, request heal
 		var current model.ClusterHealth
 		if err := c.request(ctx, "GET", clusterHealthPath(id), nil, "", &current); err != nil {
 			return model.ClusterHealth{}, err
-		}
-		if current.Mode == model.HealthModeDisabled {
-			return model.ClusterHealth{}, &ExitError{4, errors.New("health monitoring was disabled while waiting; inspect cluster status")}
 		}
 		if request.Health.ConfigurationGeneration > 0 && current.ConfigurationGeneration != request.Health.ConfigurationGeneration || request.Health.PolicyRevision > 0 && current.PolicyRevision != request.Health.PolicyRevision {
 			return model.ClusterHealth{}, &ExitError{4, errors.New("cluster configuration or health profile changed while waiting; request another check")}

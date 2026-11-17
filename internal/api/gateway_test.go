@@ -93,6 +93,7 @@ func newGateway(t *testing.T, handler http.Handler, clientCertificate bool) *gat
 	if e = db.Register(context.Background(), admin, model.Cluster{ID: "cluster", Name: "Cluster", MaxParticipants: 2}, encrypted); e != nil {
 		t.Fatal(e)
 	}
+	testutil.MarkHealthy(t, db, "cluster")
 	session, _, e := db.Book(context.Background(), alice, model.Booking{}, "one")
 	if e != nil {
 		t.Fatal(e)

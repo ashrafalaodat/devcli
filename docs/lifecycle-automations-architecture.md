@@ -58,7 +58,7 @@ Each `(rule, audit event)` creates at most one delivery. The delivery freezes it
 
 A notification finishes when its receiver returns HTTP 2xx. Its failure does not block a cluster. Use this mode for most auditable actions, including inventory synchronization and notifications.
 
-A blocking rule is permitted **only for `cluster_idle`**, and requires both enabled health monitoring and confirmation that the receiver deduplicates delivery IDs. When the last holder leaves, the same reservation transaction ends that booking and creates the delivery/hold. New manual/shared bookings, PAT fallback and deregistration respect unresolved holds. The first developer leaving a shared cluster never triggers a reset while another participant remains. Batch expiry emits one idle event per affected cluster, including expiry discovered through a later API request.
+A blocking rule is permitted **only for `cluster_idle`**, and requires confirmation that the receiver deduplicates delivery IDs; health monitoring is automatic. When the last holder leaves, the same reservation transaction ends that booking and creates the delivery/hold. New manual/shared bookings, PAT fallback and deregistration respect unresolved holds. The first developer leaving a shared cluster never triggers a reset while another participant remains. Batch expiry emits one idle event per affected cluster, including expiry discovered through a later API request.
 
 ```mermaid
 flowchart LR
@@ -69,9 +69,9 @@ flowchart LR
     E --> F[Resolve this delivery's hold]
 ```
 
-An HTTP acceptance is not pipeline completion. A successful callback moves the job to `VERIFYING`, invalidates old health claims/results and requests new checks. A pre-callback green observation cannot release it. Recovery requires two passing cycles from the current configuration/profile after the callback barrier. Restarting preserves that requirement. Disabling health monitoring leaves the verification hold in place until monitoring resumes or an administrator resolves it after review.
+An HTTP acceptance is not pipeline completion. A successful callback moves the job to `VERIFYING`, invalidates old health claims/results and requests new checks. A pre-callback green observation cannot release it. Recovery requires two passing cycles from the current configuration/profile after the callback barrier. Restarting preserves that requirement. Health monitoring always runs; a worker outage or failed checks retain the hold until fresh verification succeeds or an administrator resolves it after review.
 
-Multiple blocking rules execute serially per cluster. All unresolved blocking deliveries continue holding placement, including failed or timed-out ones. Callbacks never change manual maintenance. Health Enforce, normal reservation limits and any other holds remain independent.
+Multiple blocking rules execute serially per cluster. All unresolved blocking deliveries continue holding placement, including failed or timed-out ones. Callbacks never change manual maintenance. Mandatory health checks, normal reservation limits and any other holds remain independent.
 
 ## Configure an integration
 
@@ -138,7 +138,7 @@ The default completion budget is one hour, configurable per rule from five minut
 | `FAILED` / `TIMED_OUT` | Failed/unknown outcome; blocking hold remains |
 | `RESOLVED` | Administrator explicitly reviewed and resolved this delivery |
 
-The GUI and CLI distinguish retrying delivery from restarting a pipeline. Retry preserves the job ID, settings and deadline; it does not create a new external execution. Expired jobs and an explicitly failed pipeline are not blindly retriggered. Resolution requires a current expected state, audit reason and confirmation that external work has stopped. It does not cancel a pipeline or bypass another hold, manual maintenance or Enforce health policy.
+The GUI and CLI distinguish retrying delivery from restarting a pipeline. Retry preserves the job ID, settings and deadline; it does not create a new external execution. Expired jobs and an explicitly failed pipeline are not blindly retriggered. Resolution requires a current expected state, audit reason and confirmation that external work has stopped. It does not cancel a pipeline or bypass another hold, manual maintenance or mandatory health checks.
 
 ```bash
 devctl admin webhooks retry DELIVERY_ID --expected-state FAILED \
@@ -153,6 +153,6 @@ Destinations must match the operator's exact HTTPS origins. DNS addresses are va
 
 `DEVCTL_DEV_WEBHOOK_LOOPBACK=1` is only for owned local fixtures and requires a loopback backend listener plus `DEVCTL_DEV_HTTP=1`. It does not enable HTTP receivers. Do not enable this exception for a real deployment.
 
-Release denies subsequent gateway access and existing monitors close streams. It does **not** prove that already accepted Kubernetes requests, detached Jobs or unmanaged credentials stopped. The external integration owns drain/preflight and destructive-action policy. This version deliberately has no distributed gateway drain protocol, pipeline cancellation, arbitrary workflow graph, native CI-provider adapter or automatic Kubernetes credential replacement. A reinstall that changes credentials may fail verification and retain the hold until separately handled. These are explicit limits, not reasons to add a larger engine to the MVP.
+Release denies subsequent gateway access and existing monitors close streams. It does **not** prove that already accepted Kubernetes requests, detached Jobs or unmanaged credentials stopped. The external integration owns drain/preflight and destructive-action policy. This version deliberately has no distributed gateway drain protocol, pipeline cancellation, arbitrary workflow graph, native CI-provider adapter or automatic Kubernetes credential replacement. A reinstall that changes credentials retains the hold until an administrator updates the original kubeconfig through the audited editor and new health checks pass. These are explicit limits, not reasons to add a larger engine to the MVP.
 
 Safe delivery history contains state, event/cluster identity, attempt count, timing and a fixed reason category. It omits receiver credentials, raw bodies and callback tokens. The GUI shows the latest 100 deliveries; long-term retention and bulk history management are future operational additions. The [security notes](security.md), [OpenAPI](openapi.json) and [verification record](verification.md) cover API access and executed checks.

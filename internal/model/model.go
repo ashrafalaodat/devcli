@@ -23,6 +23,7 @@ func (i Identity) Key() string {
 }
 
 type Cluster struct {
+	RegistryVersion         int64             `json:"registry_version"`
 	ID                      string            `json:"id"`
 	Name                    string            `json:"name"`
 	Labels                  map[string]string `json:"labels"`
@@ -69,9 +70,8 @@ type DeveloperProfile struct {
 }
 
 type Settings struct {
-	DefaultMaxBookings    int        `json:"default_max_bookings"`
-	InactivityGracePeriod string     `json:"inactivity_grace_period"`
-	HealthMode            HealthMode `json:"health_mode"`
+	DefaultMaxBookings    int    `json:"default_max_bookings"`
+	InactivityGracePeriod string `json:"inactivity_grace_period"`
 }
 type Booking struct {
 	Cluster  string            `json:"cluster,omitempty"`

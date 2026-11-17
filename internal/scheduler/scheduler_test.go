@@ -3,11 +3,14 @@ package scheduler
 import (
 	"devctl.local/devctl/internal/model"
 	"testing"
+	"time"
 )
 
 func TestPlacement(t *testing.T) {
-	private := model.Cluster{ID: "a", Name: "Alpha", Labels: map[string]string{"region": "eu"}, MaxParticipants: 2, Participants: []model.Session{{ID: "s1"}}}
-	empty := model.Cluster{ID: "b", Name: "Beta", MaxParticipants: 2}
+	checked := time.Now().UTC()
+	healthy := &model.ClusterHealth{State: "PASSING", CheckedAt: &checked, ConfigurationGeneration: 1, ObservedConfigurationGeneration: 1, PolicyRevision: 1, ObservedPolicyRevision: 1}
+	private := model.Cluster{Health: healthy, ID: "a", Name: "Alpha", Labels: map[string]string{"region": "eu"}, MaxParticipants: 2, Participants: []model.Session{{ID: "s1"}}}
+	empty := model.Cluster{Health: healthy, ID: "b", Name: "Beta", MaxParticipants: 2}
 	for _, tt := range []struct {
 		name string
 		cs   []model.Cluster
@@ -18,7 +21,7 @@ func TestPlacement(t *testing.T) {
 		{"automatic fallback", []model.Cluster{private, empty}, model.Booking{}, "b"},
 		{"named busy rejected", []model.Cluster{private, empty}, model.Booking{Cluster: "a"}, ""},
 		{"selector busy rejected", []model.Cluster{private, empty}, model.Booking{Selector: map[string]string{"region": "eu"}}, ""},
-		{"stable ordering", []model.Cluster{empty, {ID: "c", MaxParticipants: 2}}, model.Booking{}, "b"},
+		{"stable ordering", []model.Cluster{empty, {ID: "c", MaxParticipants: 2, Health: healthy}}, model.Booking{}, "b"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c, e := Pick(tt.cs, tt.b)
@@ -45,5 +48,11 @@ func TestPlacement(t *testing.T) {
 	empty.Maintenance = true
 	if _, e := Pick([]model.Cluster{empty}, model.Booking{}); e == nil {
 		t.Fatal("maintenance allocated")
+	}
+}
+
+func TestMissingHealthNeverAdmitsPlacement(t *testing.T) {
+	if _, err := Pick([]model.Cluster{{ID: "unobserved", MaxParticipants: 2}}, model.Booking{}); err == nil {
+		t.Fatal("missing health was treated as passing")
 	}
 }

@@ -255,3 +255,24 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 CREATE INDEX IF NOT EXISTS webhook_due ON webhook_deliveries(next_attempt_at,lease_until) WHERE state='PENDING';
 CREATE INDEX IF NOT EXISTS webhook_holds ON webhook_deliveries(cluster_id) WHERE blocking AND state NOT IN ('SUCCEEDED','RESOLVED');
 INSERT INTO schema_version VALUES(10) ON CONFLICT DO NOTHING;
+
+-- Health monitoring is mandatory for every live registration. Remove the old
+-- rollout switch; workers and placement always use current health observations.
+ALTER TABLE application_settings DROP COLUMN IF EXISTS health_mode;
+INSERT INTO schema_version VALUES(11) ON CONFLICT DO NOTHING;
+
+-- One optimistic version for every editable registration field. Runtime holder
+-- and observation updates do not invalidate an administrator's editing snapshot.
+ALTER TABLE clusters ADD COLUMN IF NOT EXISTS registry_version bigint NOT NULL DEFAULT 1;
+CREATE OR REPLACE FUNCTION devctl_cluster_registry_version() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF ROW(OLD.name,OLD.labels,OLD.maintenance,OLD.max_participants,OLD.health_profile,OLD.kubeconfig_ciphertext,OLD.deregistered_at)
+    IS DISTINCT FROM ROW(NEW.name,NEW.labels,NEW.maintenance,NEW.max_participants,NEW.health_profile,NEW.kubeconfig_ciphertext,NEW.deregistered_at) THEN
+  NEW.registry_version := OLD.registry_version+1;
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS devctl_cluster_registry_version ON clusters;
+CREATE TRIGGER devctl_cluster_registry_version BEFORE UPDATE ON clusters
+ FOR EACH ROW EXECUTE FUNCTION devctl_cluster_registry_version();
+INSERT INTO schema_version VALUES(12) ON CONFLICT DO NOTHING;

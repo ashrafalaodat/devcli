@@ -46,6 +46,7 @@ func TestBrowserClusterLabels(t *testing.T) {
 			"id": registration.id, "name": registration.id,
 			"labels": map[string]string{"region": registration.region}, "kubeconfig": registration.config,
 		}, 200)
+		testutil.MarkHealthy(t, db, registration.id)
 	}
 	booked := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "labels-first"}, 201))
 	var issued struct {

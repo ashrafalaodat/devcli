@@ -115,7 +115,7 @@ func gatewayFailure(w http.ResponseWriter, e error) {
 		// Preserve an actionable allocation error in native kubectl's DoRaw.
 		message := e.Error()
 		if errors.Is(e, scheduler.ErrUnavailable) {
-			message = "no matching available cluster for automatic booking; an unused cluster must match the saved PAT labels, have no pending lifecycle holds and pass enforced health checks; inspect cluster status, wait for capacity or edit the preferences"
+			message = "no matching available cluster for automatic booking; an unused cluster must match the saved PAT labels, have no pending lifecycle holds and pass health checks; inspect cluster status, wait for capacity or edit the preferences"
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -226,6 +226,12 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id := session.ID
+	generation, e := s.Store.ClusterConfigurationVersion(setup, cluster, ciphertext)
+	if e != nil {
+		cancelSetup()
+		gatewayFailure(w, e)
+		return
+	}
 	setupFailure := func(category, message string) {
 		cancelSetup()
 		logGatewayFailure(cluster, id, category)
@@ -263,7 +269,7 @@ func (s *Server) gateway(w http.ResponseWriter, r *http.Request) {
 	clientContext := r.Context()
 	ctx, cancel := context.WithCancelCause(clientContext)
 	defer cancel(nil)
-	go s.monitorPrimary(ctx, cancel, u, rawToken, id, version, personal)
+	go s.monitorPrimary(ctx, cancel, u, rawToken, id, version, personal, cluster, generation)
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			decoded, _ := url.PathUnescape(suffix)
@@ -332,7 +338,7 @@ func stripGatewayHeaders(h http.Header) {
 
 // Each connection stays on the primary it started with. Switching, including an
 // away-and-back switch, changes the version and terminates existing streams.
-func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelCauseFunc, u model.Identity, token, id string, version int64, personal bool) {
+func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelCauseFunc, u model.Identity, token, id string, version int64, personal bool, cluster string, generation int64) {
 	interval := s.GatewayRecheckInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -366,6 +372,9 @@ func (s *Server) monitorPrimary(ctx context.Context, cancel context.CancelCauseF
 				if e == nil {
 					e = s.Store.CheckGatewayAuthorization(check, u, id, version)
 				}
+			}
+			if e == nil {
+				e = s.Store.CheckClusterConfiguration(check, cluster, generation)
 			}
 			if e == nil {
 				_, e = s.Store.RecordPrimaryActivity(check, u, id, version)

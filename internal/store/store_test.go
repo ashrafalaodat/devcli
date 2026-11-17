@@ -17,13 +17,18 @@ var ctx = context.Background()
 func identity(name string) model.Identity {
 	return model.Identity{Issuer: "https://issuer.test", Subject: name, Name: name, DisplayName: name + " Developer", Email: name + "@example.test"}
 }
-func register(t *testing.T, s *store.Store, id string) {
+func registerUnobserved(t *testing.T, s *store.Store, id string) {
 	t.Helper()
 	u := identity("admin")
 	u.Admin = true
 	if e := s.Register(ctx, u, model.Cluster{ID: id, Name: id, Labels: map[string]string{"type": "test"}, MaxParticipants: 2}, []byte("encrypted-placeholder")); e != nil {
 		t.Fatal(e)
 	}
+}
+func register(t *testing.T, s *store.Store, id string) {
+	t.Helper()
+	registerUnobserved(t, s, id)
+	testutil.MarkHealthy(t, s, id)
 }
 func TestConcurrentExclusiveAndIdempotency(t *testing.T) {
 	s, _ := testutil.Database(t)

@@ -90,7 +90,6 @@ func TestBrowserClusterHealth(t *testing.T) {
 	for _, fixture := range []struct{ id, config string }{{"health-a-bad", badConfig}, {"health-z-good", goodConfig}} {
 		e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": fixture.id, "name": fixture.id, "kubeconfig": fixture.config, "labels": map[string]string{"purpose": "health-test"}}, 200)
 	}
-	current := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "health-z-good"}, 201))
 	var issued struct {
 		PAT        store.PAT `json:"pat"`
 		Kubeconfig string    `json:"kubeconfig"`
@@ -133,18 +132,12 @@ func TestBrowserClusterHealth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var beforeExpiry time.Time
-	var beforeActivity *time.Time
-	if err := db.Pool.QueryRow(t.Context(), "SELECT expires_at,last_activity_at FROM sessions WHERE id=$1", current.ID).Scan(&beforeExpiry, &beforeActivity); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(1100 * time.Millisecond)
-	if bad.hits.Load()+good.hits.Load() != 0 || getHealth("health-z-good").Mode != "disabled" {
-		t.Fatal("default disabled monitoring made upstream requests")
-	}
-	e.browserRequest(alice, "PATCH", "/v1/admin/health", map[string]string{"mode": "observe", "reason": "developer must not enable monitoring"}, 403)
-	// The cookie-authenticated admin endpoint retains Origin and CSRF checks.
-	request, _ := http.NewRequest(http.MethodPatch, e.api+"/v1/admin/health", bytes.NewBufferString(`{"mode":"observe","reason":"missing csrf"}`))
+
+	// Automatic monitoring starts immediately after registration; no enable setting.
+	e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "health-a-bad"}, 409)
+	e.browserRequest(alice, "POST", "/v1/admin/clusters/health-z-good/health-check", map[string]string{"reason": "developer must not request admin checks"}, 403)
+	// The cookie-authenticated administrative refresh retains Origin/CSRF checks.
+	request, _ := http.NewRequest(http.MethodPost, e.api+"/v1/admin/clusters/health-z-good/health-check", bytes.NewBufferString(`{"reason":"missing csrf"}`))
 	request.Header.Set("Origin", e.api)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := admin.client.Do(request)
@@ -155,10 +148,20 @@ func TestBrowserClusterHealth(t *testing.T) {
 	if response.StatusCode != 403 {
 		t.Fatal("health mutation bypassed browser CSRF")
 	}
-	e.browserRequest(admin, "PATCH", "/v1/admin/health", map[string]string{"mode": "observe", "reason": "monitor owned TLS fixtures"}, 200)
 	waitFor("health-a-bad", "FAILING")
 	waitFor("health-z-good", "RECOVERING")
 	e.browserRequest(admin, "POST", "/v1/admin/clusters/health-z-good/health-check", map[string]string{"reason": "verify second complete fixture cycle"}, 202)
+	waitFor("health-z-good", "PASSING")
+	if bad.hits.Load() == 0 || good.hits.Load() == 0 {
+		t.Fatal("default monitoring made no upstream requests")
+	}
+	current := session(t, e.browserRequest(alice, "POST", "/v1/sessions", model.Booking{Cluster: "health-z-good"}, 201))
+	var beforeExpiry time.Time
+	var beforeActivity *time.Time
+	if err := db.Pool.QueryRow(t.Context(), "SELECT expires_at,last_activity_at FROM sessions WHERE id=$1", current.ID).Scan(&beforeExpiry, &beforeActivity); err != nil {
+		t.Fatal(err)
+	}
+	due("health-z-good")
 	waitFor("health-z-good", "PASSING")
 	var afterExpiry time.Time
 	var afterActivity, patUse *time.Time
@@ -171,7 +174,6 @@ func TestBrowserClusterHealth(t *testing.T) {
 	if !beforeExpiry.Equal(afterExpiry) || beforeActivity != nil || afterActivity != nil || patUse != nil {
 		t.Fatal("background probes created developer activity or used a PAT")
 	}
-	e.browserRequest(admin, "PATCH", "/v1/admin/health", map[string]string{"mode": "enforce", "reason": "require passing checks for new fixture bookings"}, 200)
 	waitFor("health-z-good", "PASSING")
 	waitFor("health-a-bad", "FAILING")
 	e.browserRequest(bob, "POST", "/v1/sessions", model.Booking{Cluster: "health-a-bad"}, 409)
@@ -218,11 +220,11 @@ func TestBrowserClusterHealth(t *testing.T) {
 	}
 	e.stop()
 	e.start()
-	if health := getHealth("health-z-good"); health.Mode != "enforce" || health.State != "PASSING" {
-		t.Fatal("restart discarded durable health observations or policy")
+	if health := getHealth("health-z-good"); health.State != "PASSING" {
+		t.Fatal("restart discarded durable health observations")
 	}
 	if bad.unsafe.Load()+good.unsafe.Load() != 0 {
 		t.Fatal("health monitoring attempted non-GET or unapproved credential operations")
 	}
-	t.Log("real Keycloak/CSRF, disabled opt-in, actual background probes, recovery, preserved activity/access, enforced placement, PAT fallback and restart passed")
+	t.Log("real Keycloak/CSRF, default automatic background probes, recovery, preserved activity/access, enforced placement, PAT fallback and restart passed")
 }

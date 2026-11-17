@@ -207,17 +207,17 @@ Sign in as `admin`; administrator navigation appears in the sidebar and on mobil
 
 - Set the default maximum held clusters, initially one, and the release-after-inactivity period, initially four hours, with an audit reason.
 - Set a developer override or clear it to inherit the default. The view shows held counts, effective limits and primary selections. Developers appear after their first application login.
-- Register an approved static kubeconfig, which is encrypted before storage. Registration and booking do not contact or modify Kubernetes.
-- Edit a cluster's registry labels through **Cluster registry → Edit labels…**. Add, change or remove key/value rows, enter an audit reason, and choose **Save labels**. Labels use Kubernetes syntax, allow empty values and are limited to32 entries. Removing all labels requires saving an explicitly empty set.
+- Register an approved static kubeconfig, which is encrypted before storage. The backend automatically checks every registered cluster using read-only Kubernetes requests; registration and booking create no cluster resources.
+- Edit the registration through **Cluster registry → Edit cluster…**: display name, placement labels, maintenance, maximum shared holders and health profile. The permanent cluster ID and current bookings remain unchanged. Labels use Kubernetes syntax, allow empty values and are limited to32 entries.
 - Enable/disable maintenance, release bookings and revoke another user's PAT with an audit reason.
 - Deregister an unused cluster from **Administration → Cluster registry** or the CLI. Supply an audit reason and confirm removal in the browser. Active bookings block deregistration; release them first.
-- Inspect allocation and administration audit records. Credential values are never displayed.
+- Inspect allocation and administration audit records, which never include credential values. To view or edit the original kubeconfig, open **Edit cluster…**, enter an audit reason and choose **Reveal kubeconfig**. Edit its YAML and choose **Save cluster**. Only SSO administrators can do this; developers keep gateway-only configurations.
 
 Search and filters operate on data already loaded in the current view. Audit filtering covers the latest100 returned events, rather than a server-side search of the complete history. Forms retain entered values after recoverable errors, and an unchanged booking retry retains its idempotency key.
 
-Registry label edits affect future matching and PAT automatic booking. They do not change Kubernetes object labels, current bookings, primary selections, imported credentials or saved PAT selectors. If another administrator changes the labels while the editor is open, saving returns a conflict and preserves the draft. **Reload current labels** explicitly replaces that draft with the latest version for review; it never silently overwrites the other edit. Label changes are audited with the administrator, reason and before/after metadata. See [ADR011](docs/adr-011.md) and [OpenAPI](docs/openapi.json) for the conditional PATCH contract.
+The full editor protects every change using the registration version loaded when it opened. A stale save returns a conflict and retains your draft; **Reload current registration** explicitly discards the draft and loads current values. Omitted kubeconfigs keep the existing encrypted credentials. **Hide and discard kubeconfig changes** and closing the editor clear the visible text; original credentials never enter browser storage, normal team responses or audit details. Revealing them is a separate audited operation, not a file download. An administrator who can view these credentials can copy them.
 
-The [Slate label-editor screenshot](docs/screenshots/slate-cluster-labels.png) uses isolated fictional data.
+Changing credentials invalidates previous health results and ends gateway streams using the old configuration within the authorization recheck interval and timeout. Subsequent requests use the new connection, while bookings, primary selections and PATs remain. New bookings wait for two passing checks. Register each physical cluster once; do not repoint an occupied registration at a different physical environment. Lowering the shared-holder limit below the number of current bookings is rejected. Registry labels affect future matching and do not change Kubernetes object labels or saved PAT selectors. See [ADR014](docs/adr-014.md) and [OpenAPI](docs/openapi.json).
 
 Lower booking-count limits never evict holders. Inactivity-period changes update current deadlines from their last activity; shortening the period can release idle bookings. Maintenance blocks new placement without ending current reservations. Administrative release updates primary selection using the same safe application state path as owner release; no Kubernetes workloads are removed.
 
@@ -239,26 +239,21 @@ Deregistration removes the stored kubeconfig and hides the cluster from booking/
 
 ## Cluster health monitoring
 
-Health monitoring is opt-in and starts **disabled**, including after upgrading an existing database. As an administrator, open **Cluster registry → Health monitoring settings…** and choose **Observe** to run checks without changing booking behavior. Review the results, then choose **Enforce** to require fresh passing checks for new bookings. Changes require an audit reason. Enabling Observe or Enforce sends fixed read-only requests from the backend to every live registered Kubernetes endpoint; choose a mode only for clusters approved for monitoring.
+The backend automatically monitors every live registered cluster. There is no Disabled/Observe/Enforce setting, environment switch or enablement step. Existing databases upgrade to this behavior while preserving reservations and stored credentials. New bookings, including shared joins and PAT fallback, require fresh passing checks; the gateway continues serving existing holders under its normal authorization rules.
 
-Each row has a separate **Health** indicator and a **Health…** action for details, requesting a check and selecting a fixed profile. The default `api-ready.v1` checks verified TLS, version, discovery and `/readyz`. An explicit `discovery-only.v1` exception omits readiness and displays that lower assurance. A readiness permission error does not silently select the weaker profile. Health checks create no Kubernetes resources or RBAC bindings, and never use a developer PAT or extend booking activity.
+Each registry row has a separate **Health** indicator and **Health…** action for details, a manual recheck and the fixed check profile. The default `api-ready.v1` checks verified TLS, version, discovery and `/readyz`. An explicit `discovery-only.v1` exception omits readiness and displays that lower assurance. A readiness permission error never silently downgrades the profile. Checks create no Kubernetes resources or RBAC bindings, never use developer PATs and never extend booking activity.
 
 ```bash
-devctl admin health
-devctl admin health --mode observe --reason 'Observe approved development clusters'
 devctl clusters
 devctl admin cluster status CLUSTER_ID --json
 devctl admin cluster check CLUSTER_ID --reason 'Investigate API connectivity' --wait --timeout 2m
-devctl admin health --mode enforce --reason 'Require fresh passing API checks'
 # Explicitly choose lower assurance only after reviewing endpoint permissions:
 devctl admin cluster profile CLUSTER_ID --profile discovery-only.v1 --reason 'Readiness access is unavailable for this approved identity'
-# Stop new probes without releasing bookings:
-devctl admin health --mode disabled --reason 'Pause monitoring'
 ```
 
-Checks normally run every 30 seconds with jitter, have a 10-second total budget and become stale after 90 seconds. A failed required check blocks new bookings immediately in Enforce mode; two consecutive passing cycles establish or restore eligibility. This applies to manual/shared booking and PAT fallback, which skips failing candidates and continues to a healthy compatible cluster. It never switches an existing primary, evicts a holder, clears maintenance or revokes access. An accepted check request is not a passing result; `--wait` waits for one completed cycle, which can still be `RECOVERING`. Failed checks return exit code 4 with their safe status.
+Checks normally run every30 seconds with jitter, have a10-second total budget and become stale after90 seconds. Unknown, recovering, failed or stale checks block new bookings. Two consecutive passing cycles establish or restore eligibility. PAT fallback skips unhealthy candidates and continues to a healthy compatible cluster. Health failure does not switch a primary, evict a holder, clear maintenance or revoke access. A requested check is not a passing result; `--wait` waits for one completed cycle, which can still be `RECOVERING`. Failed checks return exit code4 with their safe status.
 
-The worker uses PostgreSQL leases and configuration/profile versions, survives restarts, and discards stale results. Disabling stops new check claims; a cycle already in flight may finish within its bounded deadline, and its result is rejected. A normal restart preserves fresh observations. Health describes the configured API checks from the backend network path; it does not verify authenticated identity, workload permissions, capacity, CNI or application readiness. All backend replicas must share equivalent egress/trust. See the [health architecture](docs/cluster-health-architecture.md), [security notes](docs/security.md) and [OpenAPI](docs/openapi.json).
+The worker uses PostgreSQL leases and configuration/profile versions, survives restarts and discards stale results. Credential/profile edits immediately invalidate old observations and queue new checks. Health describes the configured API checks from the backend network path; it does not verify authenticated identity, workload permissions, capacity, CNI or application readiness. All backend replicas must share equivalent egress/trust. Register only endpoints approved for automatic monitoring. See the [health architecture](docs/cluster-health-architecture.md), [security notes](docs/security.md) and [OpenAPI](docs/openapi.json).
 
 ## Lifecycle webhooks
 
@@ -285,7 +280,7 @@ devctl admin webhooks runs
 devctl admin webhooks disable WEBHOOK_ID --reason 'Pause future events'
 ```
 
-Notifications finish on HTTP 2xx. Only `cluster_idle`—the **last** shared booking ending—can hold a cluster for external work. Blocking requires an idempotent receiver and enabled health monitoring. Release/expiry atomically creates the hold; the worker sends a stable delivery ID, signature and private callback URL/token. The pipeline reports `{"outcome":"succeeded"}` with that operation token, then two fresh passing health cycles resolve the hold. Failure or timeout retains it. Manual maintenance and other holds remain independent. Existing workloads are not deleted by devctl.
+Notifications finish on HTTP 2xx. Only `cluster_idle`—the **last** shared booking ending—can hold a cluster for external work. Blocking requires an idempotent receiver; health verification runs automatically. Release/expiry atomically creates the hold; the worker sends a stable delivery ID, signature and private callback URL/token. The pipeline reports `{"outcome":"succeeded"}` with that operation token, then two fresh passing health cycles resolve the hold. Failure or timeout retains it. Manual maintenance and other holds remain independent. Existing workloads are not deleted by devctl.
 
 Receivers must deduplicate `Idempotency-Key`, validate signatures and launch work asynchronously. The callback's configured public gateway origin must be reachable from the receiver; a laptop-only SSH tunnel is not an inbound route for remote CI. Disabling/editing a rule changes future events, while queued deliveries keep their original configuration. No endpoint-test button or automatic pipeline cancellation is provided.
 
@@ -355,7 +350,7 @@ Developers need network access to the gateway and IdP; the backend must reach th
 
 ### Troubleshooting kubectl discovery errors
 
-Messages from `memcache.go` about the server API group list mean discovery failed before kubectl could list workloads. The gateway's `/readyz` only checks the devctl service. When cluster health enforcement is disabled, availability does not verify connectivity; even a fresh passing check cannot guarantee a later request. Check the cluster's Health indicator and the current primary in the browser or `devctl sessions`, then make bounded requests with the same kubeconfig:
+Messages from `memcache.go` about the server API group list mean discovery failed before kubectl could list workloads. The gateway's `/readyz` only checks the devctl service. Availability requires fresh passing cluster checks, but a passing observation cannot guarantee a later request. Check the cluster's Health indicator and the current primary in the browser or `devctl sessions`, then make bounded requests with the same kubeconfig:
 
 ```bash
 kubectl --request-timeout=10s get --raw=/version

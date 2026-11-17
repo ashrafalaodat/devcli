@@ -42,6 +42,7 @@ func TestBrowserAutoBooking(t *testing.T) {
 	} {
 		upstream := newKubernetesFixtureVersion(t, fixture.version)
 		e.browserRequest(admin, "POST", "/v1/admin/clusters", map[string]any{"id": fixture.id, "name": fixture.id, "labels": map[string]string{"region": fixture.region}, "kubeconfig": upstream.kubeconfig()}, 200)
+		testutil.MarkHealthy(t, db, fixture.id)
 	}
 	var issued struct {
 		PAT        store.PAT `json:"pat"`

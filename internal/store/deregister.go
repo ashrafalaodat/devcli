@@ -47,38 +47,45 @@ func (s *Store) Cluster(ctx context.Context, id string) (model.Cluster, error) {
 		if err := t.expire(ctx); err != nil {
 			return err
 		}
-		var raw []byte
-		err := t.QueryRow(ctx, `SELECT id,name,labels,maintenance,COALESCE(controller_session,''),
- shareable,max_participants,deregistered_at FROM clusters WHERE id=$1`, id).Scan(
-			&c.ID, &c.Name, &raw, &c.Maintenance, &c.ControllerSession, &c.Shareable, &c.MaxParticipants, &c.DeregisteredAt)
-		if err != nil {
-			return err
-		}
-		if err = json.Unmarshal(raw, &c.Labels); err != nil {
-			return err
-		}
-		sessions, err := t.sessions(ctx)
-		if err != nil {
-			return err
-		}
-		if c.DeregisteredAt == nil {
-			h, e := readHealth(ctx, t, c.ID)
-			if e != nil {
-				return e
-			}
-			c.Health = &h
-			c.ConfigurationGeneration = h.ConfigurationGeneration
-			c.HealthProfile = h.Profile
-			c.HealthPolicyRevision = h.PolicyRevision
-		}
-		c.LifecycleHolds, err = t.webhookHolds(ctx, c.ID)
-		if err != nil {
-			return err
-		}
-		populateCluster(&c, sessions)
-		return nil
+		var err error
+		c, err = t.cluster(ctx, id)
+		return err
 	})
 	return c, err
+}
+
+func (t *Tx) cluster(ctx context.Context, id string) (model.Cluster, error) {
+	var c model.Cluster
+	var raw []byte
+	err := t.QueryRow(ctx, `SELECT id,name,labels,maintenance,COALESCE(controller_session,''),
+ shareable,max_participants,deregistered_at,registry_version FROM clusters WHERE id=$1`, id).Scan(
+		&c.ID, &c.Name, &raw, &c.Maintenance, &c.ControllerSession, &c.Shareable, &c.MaxParticipants, &c.DeregisteredAt, &c.RegistryVersion)
+	if err != nil {
+		return c, err
+	}
+	if err = json.Unmarshal(raw, &c.Labels); err != nil {
+		return c, err
+	}
+	sessions, err := t.sessions(ctx)
+	if err != nil {
+		return c, err
+	}
+	if c.DeregisteredAt == nil {
+		h, err := readHealth(ctx, t, c.ID)
+		if err != nil {
+			return c, err
+		}
+		c.Health = &h
+		c.ConfigurationGeneration = h.ConfigurationGeneration
+		c.HealthProfile = h.Profile
+		c.HealthPolicyRevision = h.PolicyRevision
+	}
+	c.LifecycleHolds, err = t.webhookHolds(ctx, c.ID)
+	if err != nil {
+		return c, err
+	}
+	populateCluster(&c, sessions)
+	return c, nil
 }
 
 // Deregister erases the stored credential and removes a cluster from placement.

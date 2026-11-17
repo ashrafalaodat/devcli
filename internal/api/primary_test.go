@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"devctl.local/devctl/internal/model"
+	"devctl.local/devctl/internal/testutil"
 	"k8s.io/client-go/tools/clientcmd"
 	clientapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -36,6 +37,7 @@ func addPrimaryFixture(t *testing.T, g *gatewayTest, id, response string) {
 	if e = g.db.Register(t.Context(), admin, model.Cluster{ID: id, Name: id, MaxParticipants: 2}, encrypted); e != nil {
 		t.Fatal(e)
 	}
+	testutil.MarkHealthy(t, g.db, id)
 }
 
 func expectAPI(t *testing.T, g *gatewayTest, method, path, token, body string, want int) string {

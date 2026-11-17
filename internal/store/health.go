@@ -41,14 +41,14 @@ func readHealth(ctx context.Context, q healthQuerier, id string) (model.ClusterH
 	var now time.Time
 	h.MaxAgeSeconds = int(model.HealthMaxAge / time.Second)
 	h.IdentityVerification = "NOT_CHECKED"
-	err := q.QueryRow(ctx, `SELECT a.health_mode,c.health_profile,c.configuration_generation,c.health_policy_revision,
+	err := q.QueryRow(ctx, `SELECT c.health_profile,c.configuration_generation,c.health_policy_revision,
  COALESCE(h.observed_state,'UNKNOWN'),COALESCE(h.reason_code,'not_checked'),COALESCE(h.result,'{}'),
  COALESCE(h.observed_configuration_generation,0),COALESCE(h.observed_policy_revision,0),
  h.checked_at,h.last_success_at,COALESCE(h.consecutive_successes,0),h.next_check_at,
  COALESCE(h.lease_until>clock_timestamp(),false) OR COALESCE(h.next_check_at<=clock_timestamp(),false),clock_timestamp()
- FROM clusters c CROSS JOIN application_settings a LEFT JOIN cluster_health h ON h.cluster_id=c.id
+ FROM clusters c LEFT JOIN cluster_health h ON h.cluster_id=c.id
  WHERE c.id=$1 AND c.deregistered_at IS NULL`, id).Scan(
-		&h.Mode, &h.Profile, &h.ConfigurationGeneration, &h.PolicyRevision, &h.State, &h.ReasonCode, &raw,
+		&h.Profile, &h.ConfigurationGeneration, &h.PolicyRevision, &h.State, &h.ReasonCode, &raw,
 		&h.ObservedConfigurationGeneration, &h.ObservedPolicyRevision, &h.CheckedAt, &h.LastSuccessAt,
 		&h.ConsecutiveSuccesses, &h.NextCheckAt, &h.CheckPending, &now)
 	if err != nil {
@@ -68,9 +68,6 @@ func readHealth(ctx context.Context, q healthQuerier, id string) (model.ClusterH
 	if h.DiscoveryCoverage == "" {
 		h.DiscoveryCoverage = "not_completed"
 	}
-	if h.Mode == model.HealthModeDisabled {
-		h.CheckPending = false
-	}
 	h.EvaluatedAt = now
 	return h.Effective(now), nil
 }
@@ -79,37 +76,6 @@ func readHealth(ctx context.Context, q healthQuerier, id string) (model.ClusterH
 // reservations and never obtains Kubernetes credentials or starts network work.
 func (s *Store) GetHealth(ctx context.Context, id string) (model.ClusterHealth, error) {
 	return readHealth(ctx, s.Pool, id)
-}
-
-func (s *Store) SetHealthMode(ctx context.Context, admin model.Identity, mode model.HealthMode, reason string) error {
-	if !admin.Admin {
-		return ErrForbidden
-	}
-	if !model.ValidHealthMode(mode) {
-		return fmt.Errorf("%w: health mode must be disabled, observe or enforce", ErrConflict)
-	}
-	if err := healthReason(reason); err != nil {
-		return err
-	}
-	return s.update(ctx, func(t *Tx) error {
-		var current model.HealthMode
-		if err := t.QueryRow(ctx, "SELECT health_mode FROM application_settings WHERE singleton").Scan(&current); err != nil {
-			return err
-		}
-		if current == mode {
-			return nil
-		}
-		if _, err := t.Exec(ctx, "UPDATE application_settings SET health_mode=$1 WHERE singleton", mode); err != nil {
-			return err
-		}
-		// Fencing every mode transition prevents a disabled/re-enabled worker from
-		// publishing its old claim. Existing fresh observations remain observations.
-		if _, err := t.Exec(ctx, `UPDATE cluster_health SET lease_token=NULL,lease_until=NULL,
-   probe_sequence=probe_sequence+1,next_check_at=clock_timestamp()`); err != nil {
-			return err
-		}
-		return t.audit(ctx, admin.Key(), "cluster_health_mode", "settings", fmt.Sprintf("health mode %s -> %s; existing bookings unchanged; reason: %s", current, mode, strings.TrimSpace(reason)))
-	})
 }
 
 func healthReason(reason string) error {
@@ -158,13 +124,6 @@ func (s *Store) RequestHealthCheck(ctx context.Context, admin model.Identity, id
 		return out, err
 	}
 	err := s.update(ctx, func(t *Tx) error {
-		var mode model.HealthMode
-		if err := t.QueryRow(ctx, "SELECT health_mode FROM application_settings WHERE singleton").Scan(&mode); err != nil {
-			return err
-		}
-		if mode == model.HealthModeDisabled {
-			return fmt.Errorf("%w: enable health monitoring before requesting a check", ErrConflict)
-		}
 		var live bool
 		if err := t.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM clusters WHERE id=$1 AND deregistered_at IS NULL)", id).Scan(&live); err != nil {
 			return err
@@ -217,7 +176,7 @@ func (s *Store) ClaimHealthChecks(ctx context.Context, limit int) ([]HealthClaim
 	defer t.Rollback(ctx)
 	rows, err := t.Query(ctx, `WITH picked AS (
   SELECT h.cluster_id FROM cluster_health h JOIN clusters c ON c.id=h.cluster_id
-  WHERE c.deregistered_at IS NULL AND (SELECT health_mode FROM application_settings WHERE singleton)<>'disabled'
+  WHERE c.deregistered_at IS NULL
    AND h.next_check_at<=clock_timestamp() AND (h.lease_until IS NULL OR h.lease_until<=clock_timestamp())
   ORDER BY h.next_check_at,h.cluster_id LIMIT $1 FOR UPDATE OF h SKIP LOCKED
  ) UPDATE cluster_health h SET probe_sequence=h.probe_sequence+1,lease_token=$2,
@@ -282,7 +241,7 @@ func validHealthResult(r model.HealthResult) bool {
 	return true
 }
 
-// PublishHealthCheck fences expired, replaced and disabled workers under the
+// PublishHealthCheck fences expired and replaced workers under the
 // same reservation lock that creates bookings. No network call occurs here.
 func (s *Store) PublishHealthCheck(ctx context.Context, claim HealthClaim, result model.HealthResult, nextDelay time.Duration) (bool, error) {
 	if !validHealthResult(result) {
@@ -293,17 +252,16 @@ func (s *Store) PublishHealthCheck(ctx context.Context, claim HealthClaim, resul
 	}
 	var accepted bool
 	err := s.update(ctx, func(t *Tx) error {
-		var mode model.HealthMode
 		var generation, revision int64
-		err := t.QueryRow(ctx, `SELECT a.health_mode,c.configuration_generation,c.health_policy_revision
-   FROM clusters c CROSS JOIN application_settings a WHERE c.id=$1 AND c.deregistered_at IS NULL`, claim.ClusterID).Scan(&mode, &generation, &revision)
+		err := t.QueryRow(ctx, `SELECT c.configuration_generation,c.health_policy_revision
+   FROM clusters c WHERE c.id=$1 AND c.deregistered_at IS NULL`, claim.ClusterID).Scan(&generation, &revision)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if mode == model.HealthModeDisabled || generation != claim.ConfigurationGeneration || revision != claim.PolicyRevision {
+		if generation != claim.ConfigurationGeneration || revision != claim.PolicyRevision {
 			return nil
 		}
 		var token *string

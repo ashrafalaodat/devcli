@@ -77,8 +77,6 @@ func TestWebhookCallbackScopeAndFreshHealthVerification(t *testing.T) {
 	g.app.WebhookPolicy = webhook.Policy{AllowedOrigins: []string{"https://ci.example.test"}}
 	body := webhookBody("cluster_idle")
 	body["blocking"] = true
-	expectAPI(t, g, "POST", "/v1/admin/webhooks", "admin", webhookJSON(t, body), 409)
-	expectAPI(t, g, "PATCH", "/v1/admin/health", "admin", `{"mode":"observe","reason":"Observe only the owned fixture"}`, 200)
 	var created struct {
 		Rule   store.Webhook `json:"rule"`
 		Secret string        `json:"secret"`

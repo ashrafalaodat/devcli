@@ -201,9 +201,9 @@ func newCommand(c *Client) *cobra.Command {
 				names = append(names, s.DisplayName+" <"+s.Email+">")
 			}
 			labels, _ := json.Marshal(v.Labels)
-			health := "disabled"
-			if v.Health != nil && v.Health.Mode != "disabled" {
-				health = string(v.Health.Mode) + "/" + v.Health.State
+			health := "UNKNOWN"
+			if v.Health != nil {
+				health = v.Health.State
 			}
 			fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%t\t%s\t%s\n", v.ID, v.Name, v.Available, health, v.Shareable, strings.Join(names, ", "), labels)
 		}

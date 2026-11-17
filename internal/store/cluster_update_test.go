@@ -323,3 +323,237 @@ func TestClusterLabelEditsSerializeWithBookingAndDeregistration(t *testing.T) {
 		}
 	}
 }
+
+func TestFullClusterUpdateValidationAndAdministrativeReads(t *testing.T) {
+	name, maximum, version := "renamed", 4, int64(1)
+	profile := model.HealthProfileDiscoveryOnly
+	valid := store.ClusterUpdate{Name: &name, MaxParticipants: &maximum, HealthProfile: &profile, ExpectedVersion: &version, Ciphertext: []byte("encrypted-new")}
+	if err := store.ValidateClusterUpdate(valid, "update connection"); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*store.ClusterUpdate){
+		func(p *store.ClusterUpdate) { p.ExpectedVersion = nil },
+		func(p *store.ClusterUpdate) { v := int64(0); p.ExpectedVersion = &v },
+		func(p *store.ClusterUpdate) { v := " "; p.Name = &v },
+		func(p *store.ClusterUpdate) { v := strings.Repeat("x", 129); p.Name = &v },
+		func(p *store.ClusterUpdate) { v := 1; p.MaxParticipants = &v },
+		func(p *store.ClusterUpdate) { v := 11; p.MaxParticipants = &v },
+		func(p *store.ClusterUpdate) { v := model.HealthProfile("unknown"); p.HealthProfile = &v },
+		func(p *store.ClusterUpdate) { p.Ciphertext = []byte{} },
+	} {
+		invalid := valid
+		change(&invalid)
+		if err := store.ValidateClusterUpdate(invalid, "update connection"); err == nil {
+			t.Fatal("invalid full edit accepted")
+		}
+	}
+	unauthenticated := &store.Store{}
+	if _, err := unauthenticated.AdminCluster(ctx, identity("alice"), "a"); !errors.Is(err, store.ErrForbidden) {
+		t.Fatal("developer could read administrator editor", err)
+	}
+	if _, err := unauthenticated.AdminKubeconfig(ctx, identity("alice"), "a", "view"); !errors.Is(err, store.ErrForbidden) {
+		t.Fatal("developer could read encrypted administrator credential", err)
+	}
+}
+
+func TestFullClusterUpdateFencesConfigurationAndStaleEditors(t *testing.T) {
+	s, dsn := testutil.Database(t)
+	register(t, s, "a")
+	register(t, s, "b")
+	admin := adminIdentity()
+	before, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil || before.RegistryVersion != 1 || !before.Available {
+		t.Fatal("initial editor snapshot invalid", before, err)
+	}
+	// A fresh health result does not invalidate a registration-editing snapshot.
+	testutil.MarkHealthy(t, s, "a")
+	if _, err = s.Pool.Exec(ctx, "UPDATE cluster_health SET next_check_at=clock_timestamp() WHERE cluster_id='a'"); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := s.ClaimHealthChecks(ctx, 4)
+	if err != nil || len(claims) != 1 || claims[0].ClusterID != "a" {
+		t.Fatal("could not claim in-flight old configuration probe", len(claims), err)
+	}
+	name, maximum, paused := "A renamed", 4, true
+	profile := model.HealthProfileDiscoveryOnly
+	labels := map[string]string{"region": "eu"}
+	patch := store.ClusterUpdate{Name: &name, Labels: &labels, Maintenance: &paused, MaxParticipants: &maximum, HealthProfile: &profile, Ciphertext: []byte("new-encrypted-credential"), ExpectedVersion: &before.RegistryVersion}
+	if err = s.UpdateCluster(ctx, admin, "a", patch, "rotate approved credentials"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil || after.Name != name || after.MaxParticipants != maximum || !after.Maintenance || !maps.Equal(after.Labels, labels) || after.HealthProfile != profile || after.RegistryVersion != before.RegistryVersion+1 {
+		t.Fatal("full edit was not one atomic registry revision", after, err)
+	}
+	if after.ConfigurationGeneration != before.ConfigurationGeneration+1 || after.HealthPolicyRevision != before.HealthPolicyRevision+1 || after.Health.State != "UNKNOWN" || after.Health.CheckedAt != nil {
+		t.Fatal("new connection retained an old health result", after.Health)
+	}
+	if published, err := s.PublishHealthCheck(ctx, claims[0], model.HealthResult{Passed: true, ReasonCode: "checks_passed"}, time.Minute); err != nil || published {
+		t.Fatal("old configuration probe overwrote new connection state", published, err)
+	}
+	if err = s.UpdateCluster(ctx, admin, "a", patch, "stale editor"); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("stale full edit overwrote current registration", err)
+	}
+	config, err := s.AdminKubeconfig(ctx, admin, "a", "investigate approved connection")
+	if err != nil || config.RegistryVersion != after.RegistryVersion || !bytes.Equal(config.Ciphertext, patch.Ciphertext) {
+		t.Fatal("audited editor loaded a different credential revision", err)
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil || strings.Contains(string(encoded), "credential") {
+		t.Fatal("store credential wrapper exposed ciphertext through JSON", err)
+	}
+	if _, err = s.AdminKubeconfig(ctx, admin, "a", " "); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("credential reveal accepted without audit reason", err)
+	}
+	var exposed bool
+	if err = s.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM audit WHERE detail LIKE '%new-encrypted-credential%')").Scan(&exposed); err != nil || exposed {
+		t.Fatal("audit exposed credential contents", err)
+	}
+	var viewed int
+	if err = s.Pool.QueryRow(ctx, "SELECT count(*) FROM audit WHERE action='cluster_kubeconfig_view' AND actor=$1 AND object_id='a'", admin.Key()).Scan(&viewed); err != nil || viewed != 1 {
+		t.Fatal("administrative credential view missing audit", viewed, err)
+	}
+	duplicate := "b"
+	if err = s.UpdateCluster(ctx, admin, "a", store.ClusterUpdate{Name: &duplicate, ExpectedVersion: &after.RegistryVersion}, "duplicate display name"); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("duplicate name did not return a safe conflict", err)
+	}
+	reopened, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Pool.Close()
+	persisted, err := reopened.AdminCluster(ctx, admin, "a")
+	if err != nil || persisted.RegistryVersion != after.RegistryVersion || persisted.Name != name {
+		t.Fatal("restart changed registration version or edited fields", err)
+	}
+	if err = s.Deregister(ctx, admin, "a", "retire edited registration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AdminCluster(ctx, admin, "a"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("retired registration still editable", err)
+	}
+	if _, err = s.AdminKubeconfig(ctx, admin, "a", "view retired credential"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("retired credential still readable", err)
+	}
+}
+
+func TestClusterSharingLimitPreservesHoldersAndVersionedConcurrentEditors(t *testing.T) {
+	s, dsn := testutil.Database(t)
+	register(t, s, "a")
+	admin := adminIdentity()
+	cluster, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum := 3
+	if err = s.UpdateCluster(ctx, admin, "a", store.ClusterUpdate{MaxParticipants: &maximum, ExpectedVersion: &cluster.RegistryVersion}, "support three approved holders"); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity("alice")
+	first, _, err := s.Book(ctx, alice, model.Booking{Cluster: "a"}, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Share(ctx, alice, first.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{"bob", "charlie"} {
+		if _, _, err = s.Book(ctx, identity(user), model.Booking{Cluster: "a"}, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cluster, err = s.AdminCluster(ctx, admin, "a")
+	if err != nil || cluster.RegistryVersion != 2 || len(cluster.Participants) != 3 {
+		t.Fatal("holder changes invalidated administrator snapshot", cluster, err)
+	}
+	maximum = 2
+	if err = s.UpdateCluster(ctx, admin, "a", store.ClusterUpdate{MaxParticipants: &maximum, ExpectedVersion: &cluster.RegistryVersion}, "unsafe lowering"); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("sharing limit lowered below active holders", err)
+	}
+	other, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Pool.Close()
+	start := make(chan struct{})
+	outcomes := make([]error, 12)
+	var wg sync.WaitGroup
+	for i := range outcomes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			name := fmt.Sprintf("name-%02d", i)
+			service := s
+			if i%2 == 1 {
+				service = other
+			}
+			outcomes[i] = service.UpdateCluster(ctx, admin, "a", store.ClusterUpdate{Name: &name, ExpectedVersion: &cluster.RegistryVersion}, "concurrent full editor")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	successes := 0
+	for _, err := range outcomes {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, store.ErrConflict) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 {
+		t.Fatal("full editors overwrote each other", successes)
+	}
+	current, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil || len(current.Participants) != 3 || current.RegistryVersion != cluster.RegistryVersion+1 || current.MaxParticipants != 3 {
+		t.Fatal("metadata edit disturbed holders or accepted unsafe limit", current, err)
+	}
+}
+
+func TestAdministrativeRegistryActionsDoNotChangeDeveloperActivity(t *testing.T) {
+	s, _ := testutil.Database(t)
+	register(t, s, "a")
+	u, admin := identity("alice"), adminIdentity()
+	held, _, err := s.Book(ctx, u, model.Booking{Cluster: "a"}, "held")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pat, _, err := s.CreatePAT(ctx, u, "fixture", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Even if a reservation is due for the expiry worker, viewing or editing
+	// registry configuration must not masquerade as developer activity/cleanup.
+	if _, err = s.Pool.Exec(ctx, "UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", held.ID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() string {
+		t.Helper()
+		var out string
+		if err := s.Pool.QueryRow(ctx, `SELECT jsonb_build_object(
+ 'session',(SELECT to_jsonb(s) FROM sessions s WHERE id=$1),
+ 'developer',(SELECT to_jsonb(d) FROM developers d WHERE owner_id=$2),
+ 'pat',(SELECT to_jsonb(p) FROM personal_access_tokens p WHERE id=$3))::text`, held.ID, u.Key(), pat.ID).Scan(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	before := snapshot()
+	cluster, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AdminKubeconfig(ctx, admin, "a", "inspect approved connection"); err != nil {
+		t.Fatal(err)
+	}
+	name := "A renamed"
+	if err = s.UpdateCluster(ctx, admin, "a", store.ClusterUpdate{Name: &name, Ciphertext: []byte("new-encrypted-fixture"), ExpectedVersion: &cluster.RegistryVersion}, "rotate registry connection"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AdminCluster(ctx, admin, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot() != before {
+		t.Fatal("administrator registry actions changed developer activity, expiry, reservation, primary or PAT state")
+	}
+}

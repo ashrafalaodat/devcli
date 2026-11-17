@@ -7,8 +7,11 @@ import (
 
 func TestHealthEligibilityUsesFreshCurrentObservation(t *testing.T) {
 	now := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	if (Cluster{}).HealthEligible(now) {
+		t.Fatal("missing health bypassed placement gate")
+	}
 	checked := now.Add(-30 * time.Second)
-	h := ClusterHealth{Mode: HealthModeEnforce, State: "PASSING", CheckedAt: &checked, ConfigurationGeneration: 2, ObservedConfigurationGeneration: 2, PolicyRevision: 3, ObservedPolicyRevision: 3}
+	h := ClusterHealth{State: "PASSING", CheckedAt: &checked, ConfigurationGeneration: 2, ObservedConfigurationGeneration: 2, PolicyRevision: 3, ObservedPolicyRevision: 3}
 	if !h.Eligible(now) {
 		t.Fatal("fresh matching observation blocked")
 	}
@@ -29,14 +32,6 @@ func TestHealthEligibilityUsesFreshCurrentObservation(t *testing.T) {
 			tc.mutate(&v)
 			if v.Eligible(now) {
 				t.Fatal("unsafe health admitted")
-			}
-			v.Mode = HealthModeObserve
-			if !v.Eligible(now) {
-				t.Fatal("observe mode unexpectedly enforced")
-			}
-			v.Mode = HealthModeDisabled
-			if !v.Eligible(now) {
-				t.Fatal("disabled mode unexpectedly enforced")
 			}
 		})
 	}

@@ -178,6 +178,7 @@ func TestStablePrimaryKubectlWorkflow(t *testing.T) {
 			t.Fatal(err)
 		}
 		env.run(admin, "admin", "register", "--id", id, "--name", id, "--kubeconfig", file)
+		testutil.MarkHealthy(t, database, id)
 	}
 	path := strings.TrimSpace(string(env.run(alice, "setup")))
 	original, err := os.ReadFile(path)

@@ -21,6 +21,7 @@ func registerLabelled(t *testing.T, s *store.Store, id string, labels map[string
 	if err := s.Register(ctx, adminIdentity(), model.Cluster{ID: id, Name: id, Labels: labels, MaxParticipants: 2}, []byte("encrypted-fixture-"+id)); err != nil {
 		t.Fatal(err)
 	}
+	testutil.MarkHealthy(t, s, id)
 }
 
 func TestPATBookingPolicyEditsPreserveCredentialsAndCurrentPrimary(t *testing.T) {

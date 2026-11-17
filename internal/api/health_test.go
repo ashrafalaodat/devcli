@@ -18,8 +18,6 @@ func TestHealthAPIAuthenticationValidationAndReadOnlyObservations(t *testing.T) 
 	const path = "/v1/admin/clusters/cluster/health-check"
 	for _, endpoint := range []struct{ method, path, body string }{
 		{"GET", "/v1/clusters/cluster/health", ""},
-		{"GET", "/v1/admin/health", ""},
-		{"PATCH", "/v1/admin/health", `{"mode":"observe","reason":"monitor fixtures"}`},
 		{"POST", path, `{"reason":"check fixture"}`},
 		{"PATCH", "/v1/admin/clusters/cluster/health-profile", `{"profile":"discovery-only.v1","expected_revision":1,"reason":"fixture permission policy"}`},
 	} {
@@ -35,19 +33,11 @@ func TestHealthAPIAuthenticationValidationAndReadOnlyObservations(t *testing.T) 
 	pat := createPersonal(t, g, "alice")
 	expectAPI(t, g, "GET", "/v1/clusters/cluster/health", personalSecret(t, pat), "", 401)
 	var initial model.ClusterHealth
-	if err := json.Unmarshal([]byte(expectAPI(t, g, "GET", "/v1/clusters/cluster/health", "alice", "", 200)), &initial); err != nil || initial.Mode != "disabled" || initial.State != "UNKNOWN" || initial.Profile != "api-ready.v1" || initial.IdentityVerification != "NOT_CHECKED" {
-		t.Fatal("initial observation did not describe disabled, unknown monitoring", err)
+	if err := json.Unmarshal([]byte(expectAPI(t, g, "GET", "/v1/clusters/cluster/health", "alice", "", 200)), &initial); err != nil || initial.State != "PASSING" || initial.Profile != "api-ready.v1" || initial.IdentityVerification != "NOT_CHECKED" {
+		t.Fatal("fixture observation was not returned", err)
 	}
-	expectAPI(t, g, "POST", path, "admin", `{"reason":"disabled must not trigger a probe"}`, 409)
+	expectAPI(t, g, "POST", path, "admin", `{"reason":"queue automatic monitoring refresh"}`, 202)
 	expectAPI(t, g, "GET", "/v1/clusters/missing/health", "alice", "", 404)
-	for _, body := range []string{
-		``, `{}`, `null`, `{"mode":null,"reason":"null"}`, `{"mode":"invalid","reason":"unknown"}`,
-		`{"mode":"observe","reason":" "}`, `{"mode":"observe","reason":null}`,
-		`{"mode":"observe","reason":"valid","url":"https://outside.example.test"}`,
-		`{"mode":"observe","reason":"valid"} {}`,
-	} {
-		expectAPI(t, g, "PATCH", "/v1/admin/health", "admin", body, 400)
-	}
 	for _, body := range []string{``, `{}`, `null`, `{"reason":" "}`, `{"reason":null}`, `{"reason":"check","path":"/arbitrary"}`} {
 		expectAPI(t, g, "POST", path, "admin", body, 400)
 	}
@@ -89,13 +79,6 @@ func TestHealthAPIQueuesChecksAndPreservesReservationIdentityAndCredentials(t *t
 		return v
 	}
 	before := read()
-	expectAPI(t, g, "PATCH", "/v1/admin/health", "admin", `{"mode":"observe","reason":"enable fixed checks for owned fixture"}`, 200)
-	var mode struct {
-		Mode string `json:"mode"`
-	}
-	if json.Unmarshal([]byte(expectAPI(t, g, "GET", "/v1/admin/health", "admin", "", 200)), &mode) != nil || mode.Mode != "observe" {
-		t.Fatal("monitoring policy was not persisted")
-	}
 	path := "/v1/admin/clusters/cluster/health-check"
 	var first, second struct {
 		ID      string              `json:"id"`
@@ -122,7 +105,7 @@ func TestHealthAPIQueuesChecksAndPreservesReservationIdentityAndCredentials(t *t
 		t.Fatal("health queueing performed synchronous Kubernetes calls")
 	}
 	var changes int
-	if err := g.db.Pool.QueryRow(t.Context(), "SELECT count(*) FROM audit WHERE action LIKE 'cluster_health_%' AND actor<>'system'").Scan(&changes); err != nil || changes < 3 {
+	if err := g.db.Pool.QueryRow(t.Context(), "SELECT count(*) FROM audit WHERE action LIKE 'cluster_health_%' AND actor<>'system'").Scan(&changes); err != nil || changes < 2 {
 		t.Fatal("health administration lacked audit records", err)
 	}
 }
@@ -132,7 +115,6 @@ func TestHealthAPIDatabaseFailuresAreGeneric(t *testing.T) {
 	g.db.Pool.Close()
 	for _, endpoint := range []struct{ method, path, body string }{
 		{"GET", "/v1/clusters/cluster/health", ""},
-		{"PATCH", "/v1/admin/health", `{"mode":"observe","reason":"valid"}`},
 		{"POST", "/v1/admin/clusters/cluster/health-check", `{"reason":"valid"}`},
 	} {
 		body := expectAPI(t, g, endpoint.method, endpoint.path, "admin", endpoint.body, 503)

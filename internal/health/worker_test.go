@@ -237,6 +237,7 @@ func TestWorkerWithPostgresPreservesReservationsAndActivity(t *testing.T) {
 	if err = db.Register(t.Context(), admin, model.Cluster{ID: "cluster", Name: "Fixture", MaxParticipants: 2}, cipher); err != nil {
 		t.Fatal(err)
 	}
+	testutil.MarkHealthy(t, db, "cluster")
 	session, _, err := db.Book(t.Context(), alice, model.Booking{Cluster: "cluster"}, "worker-booking")
 	if err != nil {
 		t.Fatal(err)
@@ -259,6 +260,9 @@ func TestWorkerWithPostgresPreservesReservationsAndActivity(t *testing.T) {
 		return value
 	}
 	before := snapshot()
+	if _, err = db.Pool.Exec(t.Context(), "UPDATE cluster_health SET observed_state='UNKNOWN',checked_at=NULL,consecutive_successes=0,next_check_at=clock_timestamp() WHERE cluster_id='cluster'"); err != nil {
+		t.Fatal(err)
+	}
 	w := NewWorker(db, vault)
 	w.PollInterval = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(t.Context())
@@ -275,16 +279,6 @@ func TestWorkerWithPostgresPreservesReservationsAndActivity(t *testing.T) {
 			t.Error("worker failed to stop")
 		}
 	}()
-	time.Sleep(40 * time.Millisecond)
-	mu.Lock()
-	count := len(*paths)
-	mu.Unlock()
-	if count != 0 {
-		t.Fatal("disabled monitor contacted upstream", count)
-	}
-	if err = db.SetHealthMode(t.Context(), admin, model.HealthModeObserve, "exercise isolated health monitor"); err != nil {
-		t.Fatal(err)
-	}
 	deadline := time.Now().Add(4 * time.Second)
 	advanced := false
 	for {
@@ -314,7 +308,7 @@ func TestWorkerWithPostgresPreservesReservationsAndActivity(t *testing.T) {
 		t.Fatal("health entered developer gateway/expiry paths", gatewayAudits, err)
 	}
 	mu.Lock()
-	count = len(*paths)
+	count := len(*paths)
 	mu.Unlock()
 	if count != 8 {
 		t.Fatal("expected two complete fixed GET cycles", count)

@@ -3164,3 +3164,7 @@ td > .small, td > .muted, td > strong + span { display: block; font-size: 12px; 
 .webhook-panel-heading {display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.1rem 1.3rem;border-bottom:1px solid var(--border)}
 .webhook-panel-heading h2 {margin:0;font-size:1.05rem}
 .webhook-panel-heading>span {font-size:.8rem;color:var(--muted)}
+
+.cluster-credential-editor {display:grid;gap:12px;border-top:1px solid var(--border);padding-top:20px}
+#cluster-edit-kubeconfig {font-family:ui-monospace,SFMono-Regular,monospace;line-height:1.5;resize:vertical;white-space:pre;overflow:auto;min-height:240px;width:100%;max-width:100%}
+.cluster-credential-editor [hidden] {display:none}

@@ -54,45 +54,39 @@ func healthy(t *testing.T, s *store.Store, id string) {
 
 func TestHealthDefaultAndPermissionBoundaries(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
-	settings, e := s.Settings(t.Context(), healthAdmin())
-	if e != nil || settings.HealthMode != model.HealthModeDisabled {
-		t.Fatal(settings, e)
-	}
-	claims, e := s.ClaimHealthChecks(t.Context(), 4)
-	if e != nil || len(claims) != 0 {
-		t.Fatal("migration enabled network work", claims, e)
-	}
+	registerUnobserved(t, s, "a")
 	h, e := s.GetHealth(t.Context(), "a")
-	if e != nil || h.State != "UNKNOWN" || h.Mode != model.HealthModeDisabled || h.CheckPending {
+	if e != nil || h.State != "UNKNOWN" || !h.CheckPending {
 		t.Fatal(h, e)
 	}
-	if _, e = s.RequestHealthCheck(t.Context(), healthAdmin(), "a", "check"); !errors.Is(e, store.ErrConflict) {
-		t.Fatal("disabled monitoring accepted refresh", e)
+	if _, _, e = s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "unobserved"); !errors.Is(e, scheduler.ErrUnavailable) {
+		t.Fatal("default monitoring admitted unobserved cluster", e)
 	}
-	if e = s.SetHealthMode(t.Context(), identity("alice"), model.HealthModeObserve, "unauthorized"); !errors.Is(e, store.ErrForbidden) {
+	claims, e := s.ClaimHealthChecks(t.Context(), 4)
+	if e != nil || len(claims) != 1 {
+		t.Fatal("default monitoring did not schedule live cluster", claims, e)
+	}
+	if _, e = s.RequestHealthCheck(t.Context(), identity("alice"), "a", "unauthorized"); !errors.Is(e, store.ErrForbidden) {
 		t.Fatal(e)
 	}
 	if e = s.SetHealthProfile(t.Context(), identity("alice"), "a", model.HealthProfileDiscoveryOnly, 1, "unauthorized"); !errors.Is(e, store.ErrForbidden) {
 		t.Fatal(e)
 	}
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), "invalid", "invalid"); !errors.Is(e, store.ErrConflict) {
+	if _, e = s.RequestHealthCheck(t.Context(), healthAdmin(), "a", ""); !errors.Is(e, store.ErrConflict) {
 		t.Fatal(e)
 	}
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, ""); !errors.Is(e, store.ErrConflict) {
+	if _, e = s.RequestHealthCheck(t.Context(), healthAdmin(), "a", "check automatically monitored cluster"); e != nil {
 		t.Fatal(e)
 	}
-	if _, _, e = s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "legacy"); e != nil {
-		t.Fatal("disabled mode changed existing allocation behavior", e)
+	var columns int
+	if e = s.Pool.QueryRow(t.Context(), "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='application_settings' AND column_name='health_mode'").Scan(&columns); e != nil || columns != 0 {
+		t.Fatal("old monitoring setting remains", columns, e)
 	}
 }
 
 func TestHealthRecoveryGateStalenessAndExistingBooking(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeEnforce, "start health enforcement"); e != nil {
-		t.Fatal(e)
-	}
+	registerUnobserved(t, s, "a")
 	if _, _, e := s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "book"); !errors.Is(e, scheduler.ErrUnavailable) {
 		t.Fatal("unknown health admitted", e)
 	}
@@ -149,10 +143,7 @@ func TestHealthRecoveryGateStalenessAndExistingBooking(t *testing.T) {
 
 func TestHealthLeasesAndGenerationFencing(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "observe"); e != nil {
-		t.Fatal(e)
-	}
+	registerUnobserved(t, s, "a")
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	all := []store.HealthClaim{}
@@ -204,16 +195,6 @@ func TestHealthLeasesAndGenerationFencing(t *testing.T) {
 		t.Fatal("old credentials published", ok, e)
 	}
 	old = claimHealth(t, s, "a")
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeDisabled, "pause"); e != nil {
-		t.Fatal(e)
-	}
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "resume"); e != nil {
-		t.Fatal(e)
-	}
-	if ok, e := s.PublishHealthCheck(t.Context(), old, passedHealth(), 30*time.Second); e != nil || ok {
-		t.Fatal("disabled worker published after reenable", ok, e)
-	}
-	old = claimHealth(t, s, "a")
 	if e = s.Deregister(t.Context(), healthAdmin(), "a", "retire"); e != nil {
 		t.Fatal(e)
 	}
@@ -224,20 +205,14 @@ func TestHealthLeasesAndGenerationFencing(t *testing.T) {
 
 func TestHealthPATSkipsUnhealthyFirstAndPreservesPrimary(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
-	register(t, s, "b")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "warm up"); e != nil {
-		t.Fatal(e)
-	}
+	registerUnobserved(t, s, "a")
+	registerUnobserved(t, s, "b")
 	// Claiming a batch leases both clusters; release unrelated fixture lease so
 	// each helper can schedule the named cluster independently.
 	if _, e := s.Pool.Exec(t.Context(), "UPDATE cluster_health SET next_check_at=clock_timestamp()+interval '1 day' WHERE cluster_id='a'"); e != nil {
 		t.Fatal(e)
 	}
 	healthy(t, s, "b")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeEnforce, "enforce"); e != nil {
-		t.Fatal(e)
-	}
 	alice := identity("alice")
 	_, raw, e := s.CreatePATWithPolicy(t.Context(), alice, "auto", time.Hour, model.AutoBookingPolicy{Enabled: true, Selector: map[string]string{}})
 	if e != nil {
@@ -258,7 +233,8 @@ func TestHealthPATSkipsUnhealthyFirstAndPreservesPrimary(t *testing.T) {
 
 func TestHealthReadAndPublicationNeverExtendOrExpireBookings(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
+	registerUnobserved(t, s, "a")
+	healthy(t, s, "a")
 	alice := identity("alice")
 	held, _, e := s.Book(t.Context(), alice, model.Booking{Cluster: "a"}, "held")
 	if e != nil {
@@ -272,9 +248,6 @@ func TestHealthReadAndPublicationNeverExtendOrExpireBookings(t *testing.T) {
 	if e = s.Pool.QueryRow(t.Context(), "SELECT expires_at,last_activity_at FROM sessions WHERE id=$1", held.ID).Scan(&before, &activityBefore); e != nil {
 		t.Fatal(e)
 	}
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "observe"); e != nil {
-		t.Fatal(e)
-	}
 	if _, e = s.GetHealth(t.Context(), "a"); e != nil {
 		t.Fatal(e)
 	}
@@ -286,7 +259,7 @@ func TestHealthReadAndPublicationNeverExtendOrExpireBookings(t *testing.T) {
 	if e != nil || first.ID != second.ID {
 		t.Fatal("refresh did not coalesce", first, second, e)
 	}
-	publishHealth(t, s, claimHealth(t, s, "a"), passedHealth())
+	publishHealth(t, s, claimHealth(t, s, "a"), model.HealthResult{ReasonCode: "connect_timeout"})
 	var after time.Time
 	var activityAfter *time.Time
 	var state string
@@ -297,9 +270,6 @@ func TestHealthReadAndPublicationNeverExtendOrExpireBookings(t *testing.T) {
 		t.Fatal("health mutated reservation", before, after, state)
 	}
 	// Expected health allocation rejection still commits valid expiry housekeeping.
-	if e = s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeEnforce, "enforce"); e != nil {
-		t.Fatal(e)
-	}
 	if _, _, e = s.Book(t.Context(), identity("bob"), model.Booking{Cluster: "a"}, "rejected"); !errors.Is(e, scheduler.ErrUnavailable) {
 		t.Fatal(e)
 	}
@@ -310,10 +280,7 @@ func TestHealthReadAndPublicationNeverExtendOrExpireBookings(t *testing.T) {
 
 func TestHealthFailureAndAllocationHaveDurableOrder(t *testing.T) {
 	s, _ := testutil.Database(t)
-	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeEnforce, "enforce ordering"); e != nil {
-		t.Fatal(e)
-	}
+	registerUnobserved(t, s, "a")
 	for attempt := range 8 {
 		healthy(t, s, "a")
 		claim := claimHealth(t, s, "a")
@@ -356,10 +323,7 @@ func TestHealthFailureAndAllocationHaveDurableOrder(t *testing.T) {
 
 func TestHealthRestartPreservesFreshObservation(t *testing.T) {
 	s, dsn := testutil.Database(t)
-	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeEnforce, "enforce"); e != nil {
-		t.Fatal(e)
-	}
+	registerUnobserved(t, s, "a")
 	healthy(t, s, "a")
 	before, e := s.GetHealth(t.Context(), "a")
 	if e != nil {
@@ -376,5 +340,34 @@ func TestHealthRestartPreservesFreshObservation(t *testing.T) {
 	}
 	if _, _, e = restarted.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "after-restart"); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestHealthMigrationRemovesLegacyDisabledModeWithoutChangingBooking(t *testing.T) {
+	s, dsn := testutil.Database(t)
+	register(t, s, "a")
+	held, _, err := s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "before-upgrade")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Pool.Exec(t.Context(), `ALTER TABLE application_settings ADD COLUMN health_mode text NOT NULL DEFAULT 'disabled';
+ UPDATE cluster_health SET observed_state='UNKNOWN',checked_at=NULL,next_check_at=clock_timestamp(),consecutive_successes=0;
+ DELETE FROM schema_version WHERE version=11`); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := store.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upgraded.Pool.Close()
+	claims, err := upgraded.ClaimHealthChecks(t.Context(), 4)
+	if err != nil || len(claims) != 1 {
+		t.Fatal("legacy disabled install did not schedule checks automatically", len(claims), err)
+	}
+	if err = upgraded.Access(t.Context(), identity("alice"), held.ID); err != nil {
+		t.Fatal("automatic health migration revoked existing access", err)
+	}
+	if _, _, err = upgraded.Book(t.Context(), identity("bob"), model.Booking{Cluster: "a"}, "after-upgrade"); !errors.Is(err, scheduler.ErrUnavailable) {
+		t.Fatal("unobserved cluster accepted a new booking", err)
 	}
 }

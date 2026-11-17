@@ -1137,15 +1137,15 @@
     },
     "/v1/admin/clusters/{id}": {
       "patch": {
-        "summary": "Update maintenance or placement labels without changing existing bookings",
-        "description": "Administrator only; requires an audit reason. Optional maintenance and labels fields form one atomic update. labels replaces the entire registry label map, including labels:{} to clear it, and requires expected_labels containing the previously loaded label map. A stale snapshot returns409 with reload guidance rather than overwriting another editor. Labels accept at most32 Kubernetes-qualified keys and string values (empty values are valid). Omitted fields are preserved; explicit nulls, duplicate label keys and non-string values are rejected. Label edits are permitted while a cluster is occupied or in maintenance. They affect future UI/CLI/PAT placement only: active bookings, primary selections, PAT policies/expiry, sharing and upstream credentials are unchanged. No Kubernetes API call is made. Same-value updates with a current snapshot succeed without duplicate success audits; retired/unknown IDs return404. Unexpected persistence failures return503 without database details.",
+        "summary": "Edit cluster registration and optionally replace its encrypted kubeconfig",
+        "description": "Administrator only with an audit reason. Full edits require the positive expected_version from the admin detail snapshot. Name, labels, maintenance, maximum shared holders, fixed health profile and kubeconfig update atomically; omitted fields are preserved and explicit nulls are rejected. ID and runtime bookings cannot be edited. Stale versions, duplicate names and reducing the holder limit below current bookings return409 without partial writes. Labels use Kubernetes syntax and at most32 entries. Legacy labels-only requests can instead provide expected_labels; maintenance-only clients remain compatible. Original YAML is validated as a single portable static verified-TLS context (no executable auth), encrypted before storage and excluded from the response/audit/webhook bodies. Credential/profile changes invalidate old health results and probes and schedule rechecks. Replacing credentials also closes gateway streams using the old configuration within the authorization recheck interval/timeout, preserving bookings, primary selection and PATs. No Kubernetes resources are created or changed; do not repoint occupied registrations to a different physical environment.",
         "responses": {
           "200": {
             "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Status"
+                  "$ref": "#/components/schemas/Cluster"
                 }
               }
             }
@@ -1191,7 +1191,7 @@
             }
           },
           "409": {
-            "description": "Loaded labels no longer match current metadata; reload current labels, review changes and retry",
+            "description": "Stale registry/labels snapshot, duplicate display name, or holder cap below active booking count; reload current metadata and review before retry",
             "content": {
               "application/json": {
                 "schema": {
@@ -1256,42 +1256,73 @@
                     "additionalProperties": {
                       "type": "string"
                     },
-                    "description": "Required with labels: exact previously loaded map for optimistic concurrency. {} represents no labels. Legacy snapshots may contain old invalid metadata so administrators can repair it; only the replacement must satisfy current label rules."
+                    "description": "Legacy label-snapshot CAS alternative to expected_version. Shape-checked map may contain old metadata to repair; replacement labels must satisfy current rules."
                   },
                   "reason": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1000,
                     "description": "Nonblank audit reason, trimmed before persistence; maximum1000 UTF-8 bytes."
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "max_participants": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10
+                  },
+                  "health_profile": {
+                    "$ref": "#/components/schemas/HealthProfile"
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1,
+                    "description": "Required for full edits; snapshot of registry_version. May also protect labels/maintenance edits."
+                  },
+                  "kubeconfig": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1500000,
+                    "writeOnly": true,
+                    "description": "Sensitive optional replacement original YAML, at most1500000 UTF-8 bytes; omit to preserve stored credentials. Requires expected_version."
                   }
                 },
                 "required": [
                   "reason"
                 ],
-                "oneOf": [
+                "anyOf": [
                   {
                     "required": [
-                      "maintenance"
-                    ],
-                    "not": {
-                      "anyOf": [
-                        {
-                          "required": [
-                            "labels"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "expected_labels"
-                          ]
-                        }
-                      ]
-                    }
+                      "name"
+                    ]
                   },
                   {
                     "required": [
-                      "labels",
-                      "expected_labels"
+                      "labels"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "maintenance"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "max_participants"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "health_profile"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "kubeconfig"
                     ]
                   }
                 ]
@@ -1411,6 +1442,92 @@
                     "maxLength": 1000,
                     "description": "Nonblank audit reason, at most1000 UTF-8 bytes."
                   }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Read a live administrator editing snapshot without original credentials",
+        "description": "SSO administrator only. Returns editable registry metadata and registry_version without expiring/renewing bookings or revealing credentials. Runtime identity/holders and history remain server-managed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current metadata; Cache-Control: no-store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cluster"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale registry/labels snapshot, duplicate display name, or holder cap below active booking count; reload current metadata and review before retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Metadata persistence unavailable; no database or credential details exposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -2979,7 +3096,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3116,7 +3233,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3290,7 +3407,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3464,7 +3581,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3638,7 +3755,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3812,7 +3929,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3949,7 +4066,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4098,7 +4215,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4245,7 +4362,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4429,7 +4546,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4613,7 +4730,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4797,7 +4914,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4981,7 +5098,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -5128,7 +5245,7 @@
             }
           },
           "403": {
-            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing enforced health; existing primaries are never rerouted by health.",
+            "description": "No primary, unavailable automatic capacity, booking-limit failure or access ending during a pending upstream request returns actionable text/plain. Other authorization denials return Kubernetes Status JSON. Automatic fallback also skips candidates failing health; existing primaries are never rerouted by health.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -5344,7 +5461,7 @@
     "/v1/clusters/{id}/health": {
       "get": {
         "summary": "View a safe cluster-health observation",
-        "description": "Approved developers may view team cluster health. This endpoint neither contacts Kubernetes nor updates booking activity. PATs cannot authenticate it.",
+        "description": "Always-on background read-only checks for every live registration. Safe current-version summary only; no raw URLs, bodies or credentials. New bookings always require fresh PASSING; missing, recovering, failed or stale observations block placement. Existing bookings/access remain. No monitoring mode switch exists.",
         "responses": {
           "400": {
             "description": "Invalid input",
@@ -5430,201 +5547,10 @@
         ]
       }
     },
-    "/v1/admin/health": {
-      "get": {
-        "summary": "View durable health-monitoring mode",
-        "description": "Administrator-only. No upstream requests.",
-        "responses": {
-          "400": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Invalid or expired API token / unapproved identity",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Owner, administrator or browser CSRF permission required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown developer, cluster or reservation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "State/provider unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthModeSettings"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change health-monitoring rollout mode",
-        "description": "Administrator-only audited change. Observe/enforce enables fixed read-only checks of live registrations. Disabled invalidates outstanding claim publication and stops new claims; an already-running bounded read-only cycle may finish but cannot publish. Does not release reservations, change primary or revoke PATs.",
-        "responses": {
-          "400": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Invalid or expired API token / unapproved identity",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Owner, administrator or browser CSRF permission required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown developer, cluster or reservation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Booking limit, unavailable cluster, ended/foreign selection or no active primary conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "State/provider unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthModeSettings"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "mode",
-                  "reason"
-                ],
-                "properties": {
-                  "mode": {
-                    "$ref": "#/components/schemas/HealthMode"
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1000,
-                    "description": "Nonblank audit reason; backend bounds UTF-8 size to 1000 bytes."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Required with browser cookie authentication and the exact configured Origin. Not required with an explicit Bearer JWT."
-          }
-        ]
-      }
-    },
     "/v1/admin/clusters/{id}/health-check": {
       "post": {
         "summary": "Queue or coalesce a fixed cluster-health check",
-        "description": "Administrator-only. Requires enabled monitoring; disabled returns 409. Coalesces concurrent requests and a ten-second refresh window. No arbitrary URL/path or synchronous upstream call. Inspect health after the completed cycle; RECOVERING is a completed cycle but not yet eligible under enforce mode.",
+        "description": "Administrator-only coalesced request for an extra automatic health cycle, with audit reason. Concurrent requests and a ten-second refresh window coalesce. No arbitrary URL/path or synchronous upstream call. A completed RECOVERING cycle still needs another passing cycle before new placement; no monitoring mode exists.",
         "responses": {
           "400": {
             "description": "Invalid input",
@@ -5744,7 +5670,7 @@
     "/v1/admin/clusters/{id}/health-profile": {
       "patch": {
         "summary": "Replace a fixed health profile with revision checking",
-        "description": "Administrator-only. A stale revision returns 409. An actual change invalidates old observations and claims, increases the policy revision and schedules a new check when monitoring is enabled. Never changes Kubernetes permissions or clears manual maintenance.",
+        "description": "Administrator-only. A stale revision returns 409. An actual change invalidates old observations and claims, increases the policy revision and schedules a new automatic check. Never changes Kubernetes permissions or clears manual maintenance.",
         "responses": {
           "400": {
             "description": "Invalid input",
@@ -6384,7 +6310,7 @@
     "/v1/admin/webhook-deliveries/{id}/resolve": {
       "post": {
         "summary": "Resolve one hold after reviewing stopped external work",
-        "description": "Administrator confirms external work stopped and supplies expected current state/reason. This does not cancel a pipeline or clear other holds, maintenance or enforced health.",
+        "description": "Administrator confirms external work stopped and supplies expected current state/reason. This does not cancel a pipeline or clear other holds, maintenance or health.",
         "responses": {
           "400": {
             "description": "Invalid input",
@@ -6635,6 +6561,150 @@
           }
         ]
       }
+    },
+    "/v1/admin/clusters/{id}/kubeconfig": {
+      "post": {
+        "summary": "Explicitly view original kubeconfig text (administrator only)",
+        "description": "Sensitive original credential disclosure. Requires approved SSO administrator and audit reason; records cluster_kubeconfig_view without its contents. Browser POST requires exact Origin and CSRF token. Response is Cache-Control: no-store, not a downloaded gateway config. No token/config appears in ordinary team APIs. Administrators able to view these credentials can copy them. Does not contact Kubernetes or extend a booking.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with browser cookie authentication, together with exact Origin. Not required with explicit Bearer JWT."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Nonblank audit reason, trimmed before persistence; maximum1000 UTF-8 bytes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sensitive original text; Cache-Control: no-store",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "kubeconfig",
+                    "registry_version"
+                  ],
+                  "properties": {
+                    "kubeconfig": {
+                      "type": "string",
+                      "description": "Sensitive original YAML; never include in logs or browser storage."
+                    },
+                    "registry_version": {
+                      "type": "integer",
+                      "format": "int64",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token or unapproved user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or owner permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale registry/labels snapshot, duplicate display name, or holder cap below active booking count; reload current metadata and review before retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Metadata persistence unavailable; no database or credential details exposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6788,7 +6858,7 @@
           },
           "available": {
             "type": "boolean",
-            "description": "New booking availability combines registration, maintenance, sharing/reservations and, only in enforce mode, fresh passing health. Observe and disabled modes do not add a health placement gate."
+            "description": "New booking availability requires compatible reservation/sharing limits, no maintenance/lifecycle hold and fresh current-version PASSING health. Unknown, recovering, failed or stale observations block placement; existing bookings/access remain."
           },
           "max_participants": {
             "type": "integer",
@@ -6827,6 +6897,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Independent unresolved blocking deliveries. Blocks new placement/deregistration without changing maintenance or existing permissions."
+          },
+          "registry_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "Optimistic concurrency version for editable registration data. Health observations and activity do not change it."
           }
         },
         "required": [
@@ -6835,7 +6911,8 @@
           "shareable",
           "max_participants",
           "participants",
-          "available"
+          "available",
+          "registry_version"
         ]
       },
       "Booking": {
@@ -7119,8 +7196,7 @@
         "type": "object",
         "required": [
           "default_max_bookings",
-          "inactivity_grace_period",
-          "health_mode"
+          "inactivity_grace_period"
         ],
         "properties": {
           "default_max_bookings": {
@@ -7133,9 +7209,6 @@
             "type": "string",
             "default": "4h0m0s",
             "description": "Go duration in whole seconds, 1m through 168h. Applied to each booking independently from its last activity or initial baseline."
-          },
-          "health_mode": {
-            "$ref": "#/components/schemas/HealthMode"
           }
         }
       },
@@ -7258,16 +7331,6 @@
           }
         }
       },
-      "HealthMode": {
-        "type": "string",
-        "enum": [
-          "disabled",
-          "observe",
-          "enforce"
-        ],
-        "default": "disabled",
-        "description": "Durable global rollout policy. Disabled sends no health probes. Observe probes without health placement gating. Enforce requires fresh passing checks for new bookings."
-      },
       "HealthProfile": {
         "type": "string",
         "enum": [
@@ -7314,7 +7377,6 @@
         "type": "object",
         "description": "API observation from the backend egress path, independent of reservations and manual maintenance. Staleness is derived using database time. A passing GET profile does not verify developer identity or workload permissions. Existing bookings/access remain intact when health fails.",
         "required": [
-          "mode",
           "state",
           "profile",
           "reason_code",
@@ -7330,9 +7392,6 @@
           "policy_revision"
         ],
         "properties": {
-          "mode": {
-            "$ref": "#/components/schemas/HealthMode"
-          },
           "state": {
             "type": "string",
             "enum": [
@@ -7435,17 +7494,6 @@
           }
         }
       },
-      "HealthModeSettings": {
-        "type": "object",
-        "required": [
-          "mode"
-        ],
-        "properties": {
-          "mode": {
-            "$ref": "#/components/schemas/HealthMode"
-          }
-        }
-      },
       "WebhookRule": {
         "type": "object",
         "required": [
@@ -7495,7 +7543,6 @@
                 "cluster_labels_update",
                 "cluster_health_transition",
                 "cluster_health_profile",
-                "cluster_health_mode",
                 "pat_create",
                 "pat_revoke",
                 "pat_booking_update",
@@ -7503,7 +7550,8 @@
                 "developer_booking_limit",
                 "inactivity_grace_period",
                 "browser_login",
-                "logout"
+                "logout",
+                "cluster_update"
               ]
             }
           },
@@ -7520,7 +7568,7 @@
           "blocking": {
             "type": "boolean",
             "default": false,
-            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+            "description": "Only cluster_idle may block. Requires an idempotent receiver; health verification runs automatically."
           },
           "enabled": {
             "type": "boolean",
@@ -7571,7 +7619,6 @@
               "cluster_labels_update",
               "cluster_health_transition",
               "cluster_health_profile",
-              "cluster_health_mode",
               "pat_create",
               "pat_revoke",
               "pat_booking_update",
@@ -7579,7 +7626,8 @@
               "developer_booking_limit",
               "inactivity_grace_period",
               "browser_login",
-              "logout"
+              "logout",
+              "cluster_update"
             ]
           },
           "description": {
@@ -7598,8 +7646,7 @@
         "required": [
           "rules",
           "events",
-          "allowed_origins",
-          "health_mode"
+          "allowed_origins"
         ],
         "properties": {
           "rules": {
@@ -7620,9 +7667,6 @@
               "type": "string",
               "format": "uri"
             }
-          },
-          "health_mode": {
-            "$ref": "#/components/schemas/HealthMode"
           }
         }
       },
@@ -7754,7 +7798,6 @@
                 "cluster_labels_update",
                 "cluster_health_transition",
                 "cluster_health_profile",
-                "cluster_health_mode",
                 "pat_create",
                 "pat_revoke",
                 "pat_booking_update",
@@ -7762,7 +7805,8 @@
                 "developer_booking_limit",
                 "inactivity_grace_period",
                 "browser_login",
-                "logout"
+                "logout",
+                "cluster_update"
               ]
             }
           },
@@ -7779,7 +7823,7 @@
           "blocking": {
             "type": "boolean",
             "default": false,
-            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+            "description": "Only cluster_idle may block. Requires an idempotent receiver; health verification runs automatically."
           },
           "enabled": {
             "type": "boolean",
@@ -7849,7 +7893,6 @@
                 "cluster_labels_update",
                 "cluster_health_transition",
                 "cluster_health_profile",
-                "cluster_health_mode",
                 "pat_create",
                 "pat_revoke",
                 "pat_booking_update",
@@ -7857,7 +7900,8 @@
                 "developer_booking_limit",
                 "inactivity_grace_period",
                 "browser_login",
-                "logout"
+                "logout",
+                "cluster_update"
               ]
             }
           },
@@ -7874,7 +7918,7 @@
           "blocking": {
             "type": "boolean",
             "default": false,
-            "description": "Only cluster_idle may block. Requires idempotent receiver and enabled health monitoring."
+            "description": "Only cluster_idle may block. Requires an idempotent receiver; health verification runs automatically."
           },
           "enabled": {
             "type": "boolean",

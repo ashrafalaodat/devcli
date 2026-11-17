@@ -109,9 +109,6 @@ func TestWebhooksAuditNotificationsSnapshotAndLease(t *testing.T) {
 func TestWebhooksSharedFinalReleaseAndHealthVerification(t *testing.T) {
 	s, _ := testutil.Database(t)
 	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "owned fixture monitoring"); e != nil {
-		t.Fatal(e)
-	}
 	webhookRule(t, s, "reset", true, "cluster_idle")
 	alice, _, e := s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "one")
 	if e != nil {
@@ -204,9 +201,6 @@ func TestWebhooksSharedFinalReleaseAndHealthVerification(t *testing.T) {
 func TestWebhooksBatchExpiryAndRejectedAllocationKeepHold(t *testing.T) {
 	s, _ := testutil.Database(t)
 	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "fixture"); e != nil {
-		t.Fatal(e)
-	}
 	webhookRule(t, s, "reset", true, "cluster_idle")
 	a, _, e := s.Book(t.Context(), identity("a"), model.Booking{Cluster: "a"}, "a")
 	if e != nil {
@@ -240,9 +234,6 @@ func TestWebhooksBatchExpiryAndRejectedAllocationKeepHold(t *testing.T) {
 func TestWebhooksFailureTimeoutResolveAndSerialBlocking(t *testing.T) {
 	s, dsn := testutil.Database(t)
 	register(t, s, "a")
-	if e := s.SetHealthMode(t.Context(), healthAdmin(), model.HealthModeObserve, "fixture"); e != nil {
-		t.Fatal(e)
-	}
 	webhookRule(t, s, "first", true, "cluster_idle")
 	webhookRule(t, s, "second", true, "cluster_idle")
 	a, _, e := s.Book(t.Context(), identity("alice"), model.Booking{Cluster: "a"}, "one")
@@ -326,15 +317,59 @@ func TestWebhooksValidationAndSafeEventCatalogue(t *testing.T) {
 		}
 	}
 	for _, event := range store.WebhookEvents() {
-		if strings.HasPrefix(event.Name, "webhook_") || event.Name == "gateway" || event.Name == "identity" {
+		if strings.HasPrefix(event.Name, "webhook_") || event.Name == "gateway" || event.Name == "identity" || event.Name == "cluster_kubeconfig_view" {
 			t.Fatal("recursive/read event exported")
 		}
 	}
 	h := store.Webhook{ID: "x", Name: "x", URL: "https://example.test", Events: []string{"cluster_idle"}, Enabled: true, Blocking: true, Idempotent: true, TimeoutSeconds: 3600, SecretCiphertext: []byte("encrypted")}
-	if _, e := s.SaveWebhook(t.Context(), healthAdmin(), h, 0, "disabled health"); !errors.Is(e, store.ErrConflict) {
-		t.Fatal("blocking rule bypassed verification prerequisite", e)
+	if _, e := s.SaveWebhook(t.Context(), healthAdmin(), h, 0, "automatic health verification"); e != nil {
+		t.Fatal("automatic monitoring did not permit blocking rule", e)
 	}
 	if _, e := s.SaveWebhook(t.Context(), identity("alice"), h, 0, "not admin"); !errors.Is(e, store.ErrForbidden) {
 		t.Fatal("developer created rule", e)
 	}
+}
+
+func TestClusterEditorWebhookPublishesMetadataWithoutCredentials(t *testing.T) {
+	s, _ := testutil.Database(t)
+	register(t, s, "a")
+	webhookRule(t, s, "registration-notify", false, "cluster_update")
+	admin := adminIdentity()
+	cluster, err := s.AdminCluster(ctx, admin, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "Approved cluster"
+	patch := store.ClusterUpdate{Name: &name, Ciphertext: []byte("encrypted-replacement-only"), ExpectedVersion: &cluster.RegistryVersion}
+	if err = s.UpdateCluster(ctx, admin, "a", patch, "private-reason-not-for-webhook"); err != nil {
+		t.Fatal(err)
+	}
+	jobs := webhookJobs(t, s)
+	if len(jobs) != 1 || jobs[0].EventType != "cluster_update" || jobs[0].ClusterID != "a" || jobs[0].Blocking {
+		t.Fatal("registration edit did not create one notification", len(jobs))
+	}
+	var body map[string]any
+	if json.Unmarshal(jobs[0].Body, &body) != nil || body["actor"] != admin.Key() || body["object_id"] != "a" || body["cluster_id"] != "a" || len(body) != 7 {
+		t.Fatal("registration notification has unexpected fields")
+	}
+	for _, forbidden := range []string{"encrypted-replacement-only", "private-reason-not-for-webhook", "kubeconfig", "credentials", "ciphertext"} {
+		if strings.Contains(string(jobs[0].Body), forbidden) {
+			t.Fatal("credential or private audit detail exposed in notification")
+		}
+	}
+	if _, err = s.AdminKubeconfig(ctx, admin, "a", "inspect connection"); err != nil {
+		t.Fatal(err)
+	}
+	if len(webhookJobs(t, s)) != 1 {
+		t.Fatal("administrative credential view created a lifecycle notification")
+	}
+	for _, event := range store.WebhookEvents() {
+		if event.Name == "cluster_update" {
+			if !event.Cluster || event.Blocking {
+				t.Fatal("cluster edit notification has unsafe event capabilities")
+			}
+			return
+		}
+	}
+	t.Fatal("cluster edit notification missing from event catalogue")
 }

@@ -7,7 +7,7 @@ import {ClusterHealth} from '../components/ClusterHealth';
 import {Button, Contact, FormError, Pill, date, errorMessage} from '../components/ui';
 import {formatLabels, parseLabels} from '../lib/labels';
 import {ApiError} from '../lib/api';
-import type {Cluster, DeveloperProfile, PageProps, Session, Settings, HealthMode, HealthProfile} from '../types';
+import type {Cluster, DeveloperProfile, PageProps, Session, Settings, HealthProfile} from '../types';
 
 export type AdminView = 'clusters' | 'people' | 'tokens' | 'audit';
 type Controls = Pick<PageProps, 'api' | 'refresh' | 'notify'>;
@@ -88,7 +88,7 @@ function Registration({api, refresh, notify, onClose}: Controls & {onClose: () =
     });
     if (saved) {onClose(); notify('Cluster registered. Its credentials are encrypted on the backend. No Kubernetes resources were changed.');}
   }
-  return <Dialog open busy={action.busy} onClose={close} title="Register a cluster" description="Add an approved environment. Registration saves encrypted credentials and does not contact Kubernetes." footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="register-form" className="button primary" type="submit" disabled={action.busy}>{action.busy ? 'Registering…' : 'Register cluster'}</button></>}>
+  return <Dialog open busy={action.busy} onClose={close} title="Register a cluster" description="Add an approved environment. Registration saves encrypted credentials. The backend automatically checks API connectivity and readiness." footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="register-form" className="button primary" type="submit" disabled={action.busy}>{action.busy ? 'Registering…' : 'Register cluster'}</button></>}>
     <form id="register-form" onSubmit={submit}>
       <FormError message={action.error} fields={action.fields}/>
       <fieldset disabled={action.busy} className="form-fields">
@@ -140,30 +140,7 @@ function ClusterAction({cluster, operation, api, refresh, notify, onClose}: Cont
   </Dialog>;
 }
 
-function HealthMonitoringSettings({mode, api, refresh, notify, onClose}: Controls & {mode: HealthMode; onClose: () => void}) {
-  const [selection, setSelection] = useState<HealthMode>(mode);
-  const [reason, setReason] = useState('');
-  const action = useAction();
-  const close = () => {if (!action.busy) onClose();};
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const saved = await action.run(async () => {
-      await api('/v1/admin/health', {method: 'PATCH', body: {mode: selection, reason: auditReason(reason, 'health-mode-reason')}});
-      await refresh();
-    });
-    if (saved) {onClose(); notify('Health monitoring policy saved. Existing bookings and access are preserved.');}
-  }
-  return <Dialog open busy={action.busy} onClose={close} title="Health monitoring settings" description="Control background API checks and whether their results gate new bookings." footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="health-mode-form" className="button primary" type="submit" disabled={action.busy || selection === mode}>{action.busy ? 'Saving…' : 'Save monitoring policy'}</button></>}>
-    <form id="health-mode-form" onSubmit={submit}>
-      <FormError message={action.error} fields={action.fields}/>
-      <label className="field" htmlFor="health-mode">Monitoring mode<select id="health-mode" value={selection} onChange={event => setSelection(event.target.value as HealthMode)} disabled={action.busy}><option value="disabled">Disabled · do not schedule checks</option><option value="observe">Observe · report checks without blocking bookings</option><option value="enforce">Enforce · require fresh passing checks for new bookings</option></select></label>
-      <div className={`notice ${selection === 'disabled' ? '' : 'warning'}`}><Icon name="info"/><p>{selection === 'disabled' ? 'Stops scheduling new checks. Requests already running may finish. Stored observations are retained.' : selection === 'observe' ? 'The backend will send read-only requests to registered Kubernetes endpoints using their stored credentials. Results are visible, but do not block placement.' : 'The backend will send read-only requests to registered Kubernetes endpoints. Unknown, recovering, failed or stale checks block new bookings; current holders keep their bookings and access.'}</p></div>
-      <label className="field" htmlFor="health-mode-reason">Audit reason<input id="health-mode-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={1000} required disabled={action.busy} aria-invalid={action.invalid('health-mode-reason')}/></label>
-    </form>
-  </Dialog>;
-}
-
-function ClusterHealthSettings({cluster, mode, api, refresh, notify, onClose}: Controls & {cluster: Cluster; mode: HealthMode; onClose: () => void}) {
+function ClusterHealthSettings({cluster, api, refresh, notify, onClose}: Controls & {cluster: Cluster; onClose: () => void}) {
   const original = cluster.health?.profile || cluster.health_profile || 'api-ready.v1';
   const [profile, setProfile] = useState<HealthProfile>(original);
   const [baseline, setBaseline] = useState({profile: original, revision: cluster.health?.policy_revision || cluster.health_policy_revision || 1});
@@ -195,9 +172,8 @@ function ClusterHealthSettings({cluster, mode, api, refresh, notify, onClose}: C
     });
     if (saved) notify('Current health profile loaded. Review it before saving.');
   }
-  return <Dialog open busy={action.busy} onClose={close} title="Cluster health" description="Inspect checks from the backend and configure the required API assurance." footer={<><Button onClick={close} disabled={action.busy}>Close</Button><Button onClick={check} disabled={action.busy || mode === 'disabled' || conflict || profile !== baseline.profile}>Request check</Button><button form="cluster-health-form" className="button primary" type="submit" disabled={action.busy || conflict || profile === baseline.profile}>{action.busy ? 'Saving…' : 'Save health profile'}</button></>}>
+  return <Dialog open busy={action.busy} onClose={close} title="Cluster health" description="Inspect checks from the backend and configure the required API assurance." footer={<><Button onClick={close} disabled={action.busy}>Close</Button><Button onClick={check} disabled={action.busy || conflict || profile !== baseline.profile}>Request check</Button><button form="cluster-health-form" className="button primary" type="submit" disabled={action.busy || conflict || profile === baseline.profile}>{action.busy ? 'Saving…' : 'Save health profile'}</button></>}>
     <ClusterLabel cluster={cluster}/><div className="dialog-detail"><ClusterHealth health={cluster.health} detail/></div>
-    {mode === 'disabled' && <div className="notice"><Icon name="info"/><p>Monitoring is disabled. Enable observe or enforce mode in Health monitoring settings before requesting a check.</p></div>}
     {conflict && <div className="notice warning"><Icon name="info"/><div><p>The health policy changed since this form opened. Your draft is retained. Reload and review the current profile before saving.</p><Button onClick={reload} disabled={action.busy}>Reload health profile</Button></div></div>}
     <form id="cluster-health-form" onSubmit={save}>
       <FormError message={action.error} fields={action.fields}/>
@@ -211,19 +187,49 @@ function ClusterHealthSettings({cluster, mode, api, refresh, notify, onClose}: C
 
 interface LabelRow {id: number; key: string; value: string}
 
-function ClusterLabels({cluster, api, refresh, notify, onClose}: Controls & {cluster: Cluster; onClose: () => void}) {
+function ClusterEditor({cluster, api, refresh, notify, onClose}: Controls & {cluster: Cluster; onClose: () => void}) {
   const nextID = useRef(0);
   const makeRows = (labels: Record<string, string>): LabelRow[] => Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({id: nextID.current++, key, value}));
   // This base is fixed when the drawer opens. A background refresh must not
   // replace an administrator's draft or silently accept somebody else's edit.
-  const [baseline, setBaseline] = useState<Record<string, string>>(() => ({...cluster.labels}));
+  const [baseline, setBaseline] = useState<Cluster>(() => ({...cluster, labels: {...cluster.labels}}));
+  const [name, setName] = useState(cluster.name);
+  const [maximum, setMaximum] = useState(String(cluster.max_participants));
+  const [maintenance, setMaintenance] = useState(cluster.maintenance);
+  const [profile, setProfile] = useState<HealthProfile>(cluster.health_profile || cluster.health?.profile || 'api-ready.v1');
+  const [revealed, setRevealed] = useState(false);
+  const [credentialDirty, setCredentialDirty] = useState(false);
+  const credentialInput = useRef<HTMLTextAreaElement>(null);
+  const revealRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const input = credentialInput.current;
+    return () => {revealRequest.current?.abort(); if (input) input.value = '';};
+  }, []);
   const [rows, setRows] = useState<LabelRow[]>(() => makeRows(cluster.labels || {}));
   const [reason, setReason] = useState('');
   const [conflict, setConflict] = useState(false);
   const [reloadNotice, setReloadNotice] = useState('');
   const action = useAction();
-  const changed = rows.length !== Object.keys(baseline).length || rows.some(row => !Object.hasOwn(baseline, row.key.trim()) || baseline[row.key.trim()] !== row.value.trim()) || new Set(rows.map(row => row.key.trim())).size !== rows.length;
-  const close = () => {if (!action.busy) onClose();};
+  const changed = name.trim() !== baseline.name || Number(maximum) !== baseline.max_participants || maintenance !== baseline.maintenance || profile !== (baseline.health_profile || baseline.health?.profile || 'api-ready.v1') || credentialDirty || rows.length !== Object.keys(baseline.labels).length || rows.some(row => !Object.hasOwn(baseline.labels, row.key.trim()) || baseline.labels[row.key.trim()] !== row.value.trim()) || new Set(rows.map(row => row.key.trim())).size !== rows.length;
+  function clearCredential() {
+    revealRequest.current?.abort();
+    if (credentialInput.current) credentialInput.current.value = '';
+    setRevealed(false); setCredentialDirty(false);
+  }
+  const close = () => {if (!action.busy) {clearCredential(); onClose();}};
+  async function revealCredential() {
+    await action.run(async () => {
+      const request = new AbortController(); revealRequest.current = request;
+      let result: {kubeconfig: string; registry_version: number} | undefined;
+      try {
+        result = await api<{kubeconfig: string; registry_version: number}>(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}/kubeconfig`, {method: 'POST', body: {reason: auditReason(reason, 'cluster-label-reason')}, signal: request.signal, cache: 'no-store'});
+        if (request.signal.aborted) return;
+        if (result.registry_version !== baseline.registry_version) {setConflict(true); throw new Error('This cluster changed. Reload the current registration before viewing its credentials.');}
+        if (credentialInput.current) credentialInput.current.value = result.kubeconfig;
+        setRevealed(true); setCredentialDirty(false);
+      } finally {if (result) result.kubeconfig = ''; revealRequest.current = null;}
+    });
+  }
   const keyID = (row: LabelRow) => `cluster-label-key-${row.id}`;
   const valueID = (row: LabelRow) => `cluster-label-value-${row.id}`;
   function focusAfterRender(id: string, previous: Element | null = document.activeElement) {
@@ -274,8 +280,14 @@ function ClusterLabels({cluster, api, refresh, notify, onClose}: Controls & {clu
     const saved = await action.run(async () => {
       const labels = validate();
       const why = auditReason(reason, 'cluster-label-reason');
+      if (!name.trim() || name.trim().length > 128) throw new FieldError('Enter a display name of 1 through 128 characters.', 'cluster-edit-name');
+      const participants = Number(maximum);
+      if (!Number.isInteger(participants) || participants < 2 || participants > 10) throw new FieldError('Maximum shared holders must be an integer from 2 through 10.', 'cluster-edit-maximum');
+      if (participants < cluster.participants.length) throw new FieldError('Release bookings before lowering the sharing limit below the number of current holders.', 'cluster-edit-maximum');
+      let raw = credentialDirty ? credentialInput.current?.value || '' : undefined;
+      if (raw !== undefined && (!raw.trim() || new TextEncoder().encode(raw).length > 1_500_000)) throw new FieldError('Enter a trusted kubeconfig smaller than 1.5 MB, or hide it to keep the saved credentials.', 'cluster-edit-kubeconfig');
       try {
-        await api(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}`, {method: 'PATCH', body: {labels, expected_labels: baseline, reason: why}});
+        await api(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}`, {method: 'PATCH', body: {expected_version: baseline.registry_version, name: name.trim(), labels, maintenance, max_participants: participants, health_profile: profile, ...(raw !== undefined ? {kubeconfig: raw} : {}), reason: why}});
       } catch (failure) {
         if (failure instanceof ApiError && failure.status === 409) {
           setConflict(true);
@@ -283,35 +295,41 @@ function ClusterLabels({cluster, api, refresh, notify, onClose}: Controls & {clu
           try {await refresh();} catch { /* Keep the draft and actionable conflict. */ }
         }
         throw failure;
-      }
+      } finally {raw = undefined;}
     });
     if (!saved) return;
-    onClose();
-    try {await refresh(); notify(`Labels updated for ${cluster.name}. Active bookings and access remain unchanged.`);}
-    catch {notify(`Labels were saved for ${cluster.name}. Refresh the registry to load the latest labels.`, true);}
+    clearCredential(); onClose();
+    try {await refresh(); notify('Cluster registration updated. Connection changes trigger fresh health checks.');}
+    catch {notify('Cluster registration saved. Refresh the registry to load the latest details.', true);}
   }
 
   async function reloadCurrent() {
     const trigger = document.activeElement;
     await action.run(async () => {
-      const latest = (await api<Cluster[]>('/v1/clusters')).find(value => value.id === cluster.id);
+      const latest = await api<Cluster>(`/v1/admin/clusters/${encodeURIComponent(cluster.id)}`, {cache: 'no-store'});
       if (!latest) throw new Error('This cluster is no longer registered. Close this editor and refresh the registry.');
       const loadedRows = makeRows(latest.labels || {});
-      setBaseline({...latest.labels});
+      clearCredential();
+      setBaseline({...latest, labels: {...latest.labels}});
+      setName(latest.name); setMaximum(String(latest.max_participants)); setMaintenance(latest.maintenance);
+      setProfile(latest.health_profile || latest.health?.profile || 'api-ready.v1');
       setRows(loadedRows);
       setConflict(false);
-      setReloadNotice('Current labels were loaded. Review them before saving.');
+      setReloadNotice('Current registration loaded. Review it before saving. Stored credentials are hidden.');
       focusAfterRender(loadedRows.length ? keyID(loadedRows[0]) : 'cluster-add-label', trigger);
     });
   }
 
-  return <Dialog open busy={action.busy} onClose={close} title={`Edit labels for ${cluster.name}`} description="Update devctl registry labels used to match future cluster requests. Kubernetes object labels are not changed." id="cluster-labels-dialog" footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="cluster-labels-form" className="button primary" type="submit" disabled={action.busy || !changed || conflict}>{action.busy ? 'Saving…' : 'Save labels'}</button></>}>
-    <div className="dialog-detail"><strong>{cluster.name}</strong><p className="mono">{cluster.id}</p><p>Current bookings, primary selections, credentials and saved PAT selectors stay unchanged. Updated labels affect future placement.</p></div>
+  return <Dialog open busy={action.busy} onClose={close} title={`Edit cluster: ${baseline.name}`} description="Edit the registration and its stored connection. Kubernetes object labels are not changed." id="cluster-labels-dialog" footer={<><Button onClick={close} disabled={action.busy}>Cancel</Button><button form="cluster-labels-form" className="button primary" type="submit" disabled={action.busy || !changed || conflict}>{action.busy ? 'Saving…' : 'Save cluster'}</button></>}>
+    <div className="dialog-detail"><strong>Cluster ID</strong><p className="mono">{cluster.id}</p><p>The ID is permanent. Existing bookings remain; labels affect future placement. The backend checks health automatically.</p></div>
     <form id="cluster-labels-form" onSubmit={save} noValidate>
       <FormError message={action.error} fields={action.fields}/>
       {reloadNotice && <p className="quiet-note" role="status">{reloadNotice}</p>}
-      {conflict && <div className="notice warning"><Icon name="info"/><div><strong>These labels changed while you were editing.</strong><p>Your draft is retained. Reload current labels to review the latest saved version before making another change. Reloading replaces this draft.</p><Button className="button secondary" onClick={reloadCurrent} disabled={action.busy}>Reload current labels</Button></div></div>}
-      <fieldset className="form-fields" disabled={action.busy}>
+      {conflict && <div className="notice warning"><Icon name="info"/><div><strong>This registration changed while you were editing.</strong><p>Your draft is retained. Reload the current registration to review the latest saved version. Reloading replaces this draft and hides credentials.</p><Button className="button secondary" onClick={reloadCurrent} disabled={action.busy}>Reload current registration</Button></div></div>}
+      <fieldset className="form-fields" disabled={action.busy || conflict}>
+        <label className="field" htmlFor="cluster-edit-name">Display name<input id="cluster-edit-name" name="name" value={name} onChange={event => setName(event.target.value)} maxLength={128} required autoComplete="off" aria-invalid={action.invalid('cluster-edit-name')}/></label>
+        <div className="two-columns fields"><label className="field" htmlFor="cluster-edit-maximum">Maximum shared holders<input id="cluster-edit-maximum" name="max_participants" type="number" min="2" max="10" step="1" value={maximum} onChange={event => setMaximum(event.target.value)} required aria-invalid={action.invalid('cluster-edit-maximum')}/><small>Sharing still requires the holder’s permission. Current holders: {cluster.participants.length}.</small></label><label className="field" htmlFor="cluster-edit-placement">Placement<select id="cluster-edit-placement" value={maintenance ? 'maintenance' : 'enabled'} onChange={event => setMaintenance(event.target.value === 'maintenance')}><option value="enabled">Enabled for new bookings</option><option value="maintenance">Maintenance · pause new bookings</option></select></label></div>
+        <label className="field" htmlFor="cluster-edit-profile">Health check profile<select id="cluster-edit-profile" value={profile} onChange={event => setProfile(event.target.value as HealthProfile)}><option value="api-ready.v1">API discovery and readiness · recommended</option><option value="discovery-only.v1">API discovery only · readiness not checked</option></select><small>Checks always run. Changing the profile invalidates previous observations.</small></label>
         <div className="section-title"><div><h3>Placement labels</h3><p className="field-help">{rows.length} of 32 labels. Keys are unique; values may be empty.</p></div><Button id="cluster-add-label" onClick={addRow} disabled={rows.length >= 32 || conflict}><Icon name="plus"/>Add label</Button></div>
         {rows.length === 0 && <div className="empty"><strong>No registry labels</strong><p>Add a label for cluster matching, or save this empty set to remove the existing labels.</p></div>}
         {rows.map((row, index) => <div key={row.id} className="dialog-detail" data-label-row={row.id}>
@@ -320,10 +338,18 @@ function ClusterLabels({cluster, api, refresh, notify, onClose}: Controls & {clu
           <label className="field" htmlFor={valueID(row)}>Value<input id={valueID(row)} name="label_value" value={row.value} onChange={event => setRows(current => current.map(value => value.id === row.id ? {...value, value: event.target.value} : value))} placeholder="eu" maxLength={63} disabled={conflict} autoComplete="off" spellCheck={false} aria-invalid={action.invalid(valueID(row))} aria-describedby={action.invalid(valueID(row)) ? `${valueID(row)}-error` : undefined}/>{action.fields.find(value => value.id === valueID(row)) && <span className="field-error" id={`${valueID(row)}-error`}>{action.fields.find(value => value.id === valueID(row))?.message}</span>}</label></div>
         </div>)}
         {rows.length > 0 && <Button className="button danger-text align-start" onClick={clearRows} disabled={conflict}>Remove all labels</Button>}
-        {rows.length === 0 && Object.keys(baseline).length > 0 && <div className="notice warning"><Icon name="info"/><p>Saving removes every registry label. Requests and PAT automatic-booking selectors that require these labels may no longer match this cluster.</p></div>}
-        <label className="field" htmlFor="cluster-label-reason">Audit reason<input id="cluster-label-reason" name="reason" required value={reason} onChange={event => setReason(event.target.value)} maxLength={500} disabled={conflict} autoComplete="off" aria-invalid={action.invalid('cluster-label-reason')} aria-describedby={action.invalid('cluster-label-reason') ? 'cluster-label-reason-error' : 'cluster-label-reason-help'}/><small id="cluster-label-reason-help">Explain the placement change. Required for saving labels.</small>{action.fields.find(value => value.id === 'cluster-label-reason') && <span className="field-error" id="cluster-label-reason-error">{action.fields.find(value => value.id === 'cluster-label-reason')?.message}</span>}</label>
+        {rows.length === 0 && Object.keys(baseline.labels).length > 0 && <div className="notice warning"><Icon name="info"/><p>Saving removes every registry label. Requests and PAT automatic-booking selectors that require these labels may no longer match this cluster.</p></div>}
+        <section className="cluster-credential-editor" aria-labelledby="cluster-credential-title"><div className="section-title"><div><h3 id="cluster-credential-title">Stored kubeconfig</h3><p className="field-help">Administrator access only. Enter an audit reason below before revealing it.</p></div></div>
+          {!revealed && <Button onClick={revealCredential} disabled={action.busy || conflict}><Icon name="lock"/>Reveal kubeconfig</Button>}
+          <div hidden={!revealed}>
+            <div className="notice warning"><Icon name="lock"/><p>This text contains cluster credentials. Saving replaces the connection, closes existing gateway streams and requires new health checks. Developers never receive this text.</p></div>
+            <label className="field" htmlFor="cluster-edit-kubeconfig">Kubeconfig YAML<textarea ref={credentialInput} id="cluster-edit-kubeconfig" name="kubeconfig" rows={15} maxLength={1_500_000} onChange={() => setCredentialDirty(true)} spellCheck={false} autoComplete="off" autoCapitalize="off" aria-invalid={action.invalid('cluster-edit-kubeconfig')}/><small>Embedded CA data and static credentials only. TLS verification is required.</small></label>
+            <Button onClick={clearCredential} disabled={action.busy}>Hide and discard kubeconfig changes</Button>
+          </div>
+        </section>
+        <label className="field" htmlFor="cluster-label-reason">Audit reason<input id="cluster-label-reason" name="reason" required value={reason} onChange={event => setReason(event.target.value)} maxLength={500} disabled={conflict} autoComplete="off" aria-invalid={action.invalid('cluster-label-reason')} aria-describedby={action.invalid('cluster-label-reason') ? 'cluster-label-reason-error' : 'cluster-label-reason-help'}/><small id="cluster-label-reason-help">Required to reveal credentials or save changes. Do not include secrets in this reason.</small>{action.fields.find(value => value.id === 'cluster-label-reason') && <span className="field-error" id="cluster-label-reason-error">{action.fields.find(value => value.id === 'cluster-label-reason')?.message}</span>}</label>
       </fieldset>
-      {!changed && !conflict && <p className="quiet-note">No label changes yet.</p>}
+      {!changed && !conflict && <p className="quiet-note">No registration changes yet.</p>}
     </form>
   </Dialog>;
 }
@@ -333,9 +359,7 @@ function Fleet(props: PageProps) {
   const [search, setSearch] = useState('');
   const [placement, setPlacement] = useState('all');
   const [registration, setRegistration] = useState(false);
-  const [healthSettings, setHealthSettings] = useState(false);
-  const healthMode = data.settings?.health_mode || data.clusters.find(cluster => cluster.health)?.health?.mode || 'disabled';
-  const [selected, setSelected] = useState<{id: string; operation: 'placement' | 'deregister' | 'labels' | 'health'} | null>(null);
+  const [selected, setSelected] = useState<{id: string; operation: 'placement' | 'deregister' | 'edit' | 'health'} | null>(null);
   const registered = data.clusters.map(cluster => ({...cluster, participants: (cluster.participants || []).filter(session => session.state === 'ACTIVE')}));
   const current = selected && registered.find(cluster => cluster.id === selected.id);
   const query = search.trim().toLowerCase();
@@ -343,8 +367,8 @@ function Fleet(props: PageProps) {
   useEffect(() => {if (selected && !data.clusters.some(cluster => cluster.id === selected.id)) setSelected(null);}, [data.clusters, selected]);
   return <>
     <div className="page-heading"><div><div className="eyebrow">ADMINISTRATION</div><h1 id="admin-title">Cluster registry</h1><p>Control which registered environments developers can reserve.</p></div><Button className="button primary" onClick={() => setRegistration(true)}><Icon name="plus"/>Register cluster</Button></div>
-    <div className="admin-summary"><div><strong>{data.clusters.length}</strong><span>registered</span></div><div><strong>{registered.filter(cluster => cluster.participants.length > 0).length}</strong><span>with active holders</span></div><div><strong>{data.clusters.filter(cluster => cluster.maintenance).length}</strong><span>in maintenance</span></div><span className="small muted">{healthMode === 'disabled' ? 'Health monitoring disabled' : healthMode === 'observe' ? 'Health checks observed · placement unchanged' : 'Fresh passing health required for new bookings'}</span></div>
-    <div className="health-policy-bar"><p>Health checks are independent of reservations and manual maintenance.</p><Button onClick={() => setHealthSettings(true)}>Health monitoring settings…</Button></div>
+    <div className="admin-summary"><div><strong>{data.clusters.length}</strong><span>registered</span></div><div><strong>{registered.filter(cluster => cluster.participants.length > 0).length}</strong><span>with active holders</span></div><div><strong>{data.clusters.filter(cluster => cluster.maintenance).length}</strong><span>in maintenance</span></div><span className="small muted">Automatic health checks · fresh passing checks required for new bookings</span></div>
+    <div className="health-policy-bar"><p>The backend checks every cluster automatically. Health checks do not extend bookings or change manual maintenance.</p></div>
     <section id="maintenance-list" className="panel flush table-wrap mobile-records" aria-label="Cluster placement controls"><div className="table-toolbar"><Search label="Search registered clusters" placeholder="Search name, ID or label" value={search} onChange={setSearch}/><div className="toolbar-actions"><label className="filter-label"><span className="sr-only">Placement filter</span><select value={placement} onChange={event => setPlacement(event.target.value)}><option value="all">All placement</option><option value="enabled">Placement enabled</option><option value="maintenance">Maintenance</option></select></label><Button id="refresh-admin" onClick={refresh} notify={notify}><Icon name="refresh"/>Refresh registry</Button></div></div>
       <AdminTable headers={['Cluster', 'Placement', 'Health', 'Holders', 'Sharing limit', 'Manage']} empty={query || placement !== 'all' ? 'No clusters match these filters.' : 'No clusters registered. Register an approved environment to get started.'} rows={clusters.map(cluster => ({key: cluster.id, cluster: cluster.id, cells: [
         <ClusterLabel cluster={cluster}/>,
@@ -352,14 +376,13 @@ function Fleet(props: PageProps) {
         <ClusterHealth health={cluster.health}/>,
         cluster.participants.length ? cluster.participants.map(holder => <Contact key={holder.id} person={holder}/>) : <span className="muted">No active holders</span>,
         <div><strong>{cluster.max_participants} developers</strong><small>{cluster.shareable ? `${cluster.participants.length} currently held` : 'Sharing is currently off'}</small></div>,
-        <div><div className="row-actions"><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'health'})}>Health…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'labels'})}>Edit labels…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'placement'})}>{cluster.maintenance ? 'Enable placement…' : 'Maintenance…'}</Button><Button className="button danger-text" disabled={cluster.participants.length > 0} aria-describedby={cluster.participants.length ? `deregister-blocked-${cluster.id}` : undefined} onClick={() => setSelected({id: cluster.id, operation: 'deregister'})}>Deregister…</Button></div>{cluster.participants.length > 0 && <small id={`deregister-blocked-${cluster.id}`}>Release active bookings first.</small>}</div>,
+        <div><div className="row-actions"><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'health'})}>Health…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'edit'})}>Edit cluster…</Button><Button className="button subtle" onClick={() => setSelected({id: cluster.id, operation: 'placement'})}>{cluster.maintenance ? 'Enable placement…' : 'Maintenance…'}</Button><Button className="button danger-text" disabled={cluster.participants.length > 0} aria-describedby={cluster.participants.length ? `deregister-blocked-${cluster.id}` : undefined} onClick={() => setSelected({id: cluster.id, operation: 'deregister'})}>Deregister…</Button></div>{cluster.participants.length > 0 && <small id={`deregister-blocked-${cluster.id}`}>Release active bookings first.</small>}</div>,
       ]}))}/>
       <div className="table-footer"><span>{clusters.length} of {data.clusters.length} live registrations</span><span>Retired entries remain in booking and audit history</span></div>
     </section>
     <div className="two-columns compact-panels"><section className="panel"><h3>Maintenance pauses new bookings</h3><p>Current holders keep their reservations. An audit reason is required for placement changes.</p></section><section className="panel"><h3>Deregistration removes stored access</h3><p>Release active bookings first. Removing a registration leaves Kubernetes workloads and booking history intact.</p></section></div>
     {registration && <Registration api={api} refresh={refresh} notify={notify} onClose={() => setRegistration(false)}/>}
-    {healthSettings && <HealthMonitoringSettings mode={healthMode} api={api} refresh={refresh} notify={notify} onClose={() => setHealthSettings(false)}/>}
-    {selected && current && (selected.operation === 'health' ? <ClusterHealthSettings key={`${selected.id}-health`} cluster={current} mode={healthMode} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : selected.operation === 'labels' ? <ClusterLabels key={`${selected.id}-labels`} cluster={current} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : <ClusterAction key={`${selected.id}-${selected.operation}`} cluster={current} operation={selected.operation} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/>)}
+    {selected && current && (selected.operation === 'health' ? <ClusterHealthSettings key={`${selected.id}-health`} cluster={current} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : selected.operation === 'edit' ? <ClusterEditor key={`${selected.id}-edit`} cluster={current} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/> : <ClusterAction key={`${selected.id}-${selected.operation}`} cluster={current} operation={selected.operation} api={api} refresh={refresh} notify={notify} onClose={() => setSelected(null)}/>)}
   </>;
 }
 

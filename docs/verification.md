@@ -1,5 +1,34 @@
 # Gateway verification record
 
+## 2026-11-17: automatic health and full administrator cluster editor
+
+Implemented and tested:
+
+- Removed Disabled/Observe/Enforce from models, settings, API, CLI and GUI. Migration11 drops the durable mode column. Every live registration is checked automatically, and missing/unknown/recovering/failed/stale health blocks every new manual/shared/PAT allocation. Existing reservations and access retain their normal rules. No production health bypass exists; older transport/reservation tests explicitly seed health only in their owned test schemas, while dedicated health tests use real verified-TLS probes.
+- Added migration12 and one `registry_version` column/trigger. Administrators can atomically edit display name, labels, maintenance, shared-holder cap, fixed health profile and encrypted original kubeconfig. IDs/history/runtime holders remain immutable through the editor. Stale versions, duplicate display names and a cap below current holders return conflicts. Twelve concurrent editors across two Store instances admit one save; metadata, credentials and health changes are fenced together.
+- Added separate administrator detail and audited original-credential reveal endpoints. The reveal is an explicit POST with reason, no-store response and browser Origin/CSRF protection. Only approved SSO administrators can use it; normal team APIs, audits and webhook bodies exclude original credentials. The React editor keeps text in its DOM, fetches only on Reveal, sends credentials only after editing, and clears on hide/reload/close/unmount. Stale saves retain the draft until explicit reload. An administrator permitted to view credentials can copy them; this is not a claim of memory erasure or upstream credential revocation.
+- Credential/profile edits invalidate old health results/claims and schedule new checks. Gateway transports capture the exact encrypted snapshot's configuration generation; credential replacement closes old streams without changing bookings, primary selections, PATs or OAuth authorization leases. The same PAT subsequently uses the updated upstream. PostgreSQL tests also prove metadata/reveal/edit operations leave session/developer/PAT rows unchanged even when an inactivity deadline has elapsed.
+- Added safe `cluster_update` webhook notifications to the fixed21-event catalogue, replacing the retired health-mode event. Credential viewing remains excluded. Updated README, OpenAPI, health/lifecycle architecture, security guidance and ADR014; ADR012 now records mandatory health.
+- Rebuilt and gracefully restarted the owned host backend on HTTPS127.0.0.1:9090. Verified-CA readiness, served/built bundle comparison and schema12 passed. PostgreSQL/Keycloak Compose services remained running; no Compose recreation was required. Before/after private snapshots confirmed registrations, encrypted credential digests, sessions, developers and PAT rows unchanged. No real cluster resources or corporate identity systems were modified.
+- Automatic read-only observations from the running backend: `cluster-4617` PASSING/checks_passed; `cluster-3219`, `cluster-4156` and `cluster-4196` FAILING/tls_untrusted. No trust checks were bypassed or stored credentials changed. These three need approved certificate/trust correction before new bookings. This observation verifies connectivity checks only, not workload behavior.
+
+Commands actually executed (Go temporary/cache paths and npm cache used the existing local workspace locations):
+
+| Command | Result |
+| --- | --- |
+| `make build test` | Passed; final production UI/Go binaries, TypeScript,14 frontend unit cases, shell regressions and Go race suites. Tests requiring unconfigured external services explicitly skip here |
+| `./scripts/demo-test.sh` | Final run passed: real PostgreSQL API26.485s, store26.189s, health2.742s, browser3.054s; real local Keycloak/CLI/native kubectl integration26.191s including stable-primary workflow16.80s |
+| `./scripts/browser-test.sh` | Final run passed22.138s: disposable local Keycloak, isolated PostgreSQL and actual backend with owned TLS fixtures. New cluster editor1.05s, automatic health6.47s and lifecycle verification6.40s, plus existing access/labels/PAT flows |
+| `npm run test:ui --prefix frontend` | Passed; production Slate UI under strict CSP, keyboard/mobile contracts, automatic health gates, full metadata editing, stale-version reload and protected transient kubeconfig text |
+| Focused `go test -race ./internal/api -run '^TestAdmin(ClusterEditor\|CredentialReplacement)' -count=1` with the local test database | Passed1.847s; role denial, safe metadata/audit, validation, original-config reveal, stale atomic edits and old-stream cancellation/new-upstream routing |
+| Focused real-PostgreSQL editor/concurrency, migration, activity-preservation and webhook payload tests | Passed; editor2.676s, mandatory-health migration1.367s, activity preservation1.226s, safe webhook1.385s |
+| `go vet ./...`, `bash -n scripts/browser-test.sh`, `git diff --check`, OpenAPI and documentation link checks | Passed;403 internal OpenAPI references and44 relative documentation links validated |
+| Guarded graceful backend restart, verified-CA `/readyz`, served/built JavaScript comparison and read-only database checks | Passed; schema12, no mode column, four preserved registrations, automatic health observations above |
+
+The initial browser/demo integration runs exposed two older registrations missing their test-only healthy fixture setup; those fixtures were corrected and both full scripts then passed. Production eligibility was not weakened. No dependencies were added or upgraded.
+
+Implemented but not tested against real workloads: configuration replacement stream behavior and booking gates use disposable TLS protocol fixtures; remote workload apply/logs/exec/port-forward and real Kubernetes credential rotation were not exercised in this change. Full container rebuild/runtime, production network/proxy behavior, desktop credential stores and corporate OIDC remain deployment validation. Deferred: Kubernetes permission isolation, resource accounting, workload cleanup, arbitrary health probes/history and pipeline-managed credential replacement. Existing direct kubeconfigs still bypass reservations.
+
 ## 2026-11-17: small lifecycle webhooks and completion holds
 
 Implemented and tested:

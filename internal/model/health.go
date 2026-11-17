@@ -2,22 +2,15 @@ package model
 
 import "time"
 
-type HealthMode string
 type HealthProfile string
 
 const (
-	HealthModeDisabled         HealthMode    = "disabled"
-	HealthModeObserve          HealthMode    = "observe"
-	HealthModeEnforce          HealthMode    = "enforce"
 	HealthProfileAPIReady      HealthProfile = "api-ready.v1"
 	HealthProfileDiscoveryOnly HealthProfile = "discovery-only.v1"
 	HealthMaxAge                             = 90 * time.Second
 	HealthLeaseDuration                      = 20 * time.Second
 )
 
-func ValidHealthMode(v HealthMode) bool {
-	return v == HealthModeDisabled || v == HealthModeObserve || v == HealthModeEnforce
-}
 func ValidHealthProfile(v HealthProfile) bool {
 	return v == HealthProfileAPIReady || v == HealthProfileDiscoveryOnly
 }
@@ -43,7 +36,6 @@ type HealthResult struct {
 }
 
 type ClusterHealth struct {
-	Mode                            HealthMode        `json:"mode"`
 	State                           string            `json:"state"`
 	Profile                         HealthProfile     `json:"profile"`
 	ReasonCode                      string            `json:"reason_code"`
@@ -85,7 +77,7 @@ func (h ClusterHealth) Effective(now time.Time) ClusterHealth {
 }
 
 func (h ClusterHealth) Eligible(now time.Time) bool {
-	return h.Mode == HealthModeDisabled || h.Mode == HealthModeObserve || h.Mode == HealthModeEnforce && h.Effective(now).State == "PASSING"
+	return h.Effective(now).State == "PASSING"
 }
 
-func (c Cluster) HealthEligible(now time.Time) bool { return c.Health == nil || c.Health.Eligible(now) }
+func (c Cluster) HealthEligible(now time.Time) bool { return c.Health != nil && c.Health.Eligible(now) }

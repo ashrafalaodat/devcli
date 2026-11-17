@@ -262,6 +262,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	for _, id := range []string{"alpha", "beta"} {
 		env.run(admin, "admin", "register", "--id", id, "--name", strings.Title(id), "--kubeconfig", config, "--label", "region=local")
+		testutil.MarkHealthy(t, database, id)
 	}
 
 	var ciphertext []byte
